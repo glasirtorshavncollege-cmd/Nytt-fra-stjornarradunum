@@ -1,8 +1,11 @@
-name: Ministry Watch
+name: Nýtt frá stjórnarráðunum
 
 on:
   schedule:
+    # Koyrir eina ferð um dagin kl. 06:30 UTC.
+    # Tað er vanliga 07:30 føroyska tíð um veturin og 07:30/06:30 eftir uppseting og summar-/vetrartíð.
     - cron: "30 6 * * *"
+
   workflow_dispatch:
 
 permissions:
@@ -13,9 +16,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
@@ -26,7 +31,7 @@ jobs:
         run: python monitor.py
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_PORT: "587"
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
