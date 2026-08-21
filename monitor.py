@@ -3,7 +3,7 @@ import json
 import os
 import re
 from datetime import datetime, timezone
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 import yaml
@@ -16,6 +16,10 @@ SOURCES_FILE = "sources.yml"
 MAX_ITEMS_PER_SOURCE = 6
 MAX_ITEMS_IN_ISSUE = 8
 
+HEADERS = {
+    "User-Agent": "fo-ministry-watch/1.0"
+}
+
 MEANINGFUL_KEYWORDS = [
     "lóg", "lógar", "lógaruppskot", "kunngerð", "kunngerðir", "uppskot",
     "hoyring", "ummæli", "ummælis", "freist", "avgerð", "samtykt", "játtan",
@@ -23,19 +27,36 @@ MEANINGFUL_KEYWORDS = [
     "miðnám", "yrkis", "heilsu", "almanna", "bústað", "orka",
     "vinnu", "fiskivinnu", "trygd", "verja", "samstarv", "avtala",
     "skipan", "talgild", "vitlíki", "gransking", "stuðul", "verkætlan",
+    "landsstýri", "ráð", "stjórnarráð", "undirskrivað", "sett í verk",
+]
+
+LOW_VALUE_TITLES = [
+    "forsíða",
+    "kunning",
+    "arbeiðsøki",
+    "um ráðið",
+    "samband",
+    "leys størv",
+    "frágreiðingar og álit",
+    "talgilding",
+    "lógartænasta og lógarsmíð",
+    "rundskriv um lógarsmíð",
+    "uppskot til ummælis",
+    "kunngerðing o.tíl.",
+    "almanna- og bústaðamálaráðið",
+    "heilsu- og orkumálaráðið",
+    "vinnumálaráðið",
 ]
 
 LOW_VALUE_KEYWORDS = [
-    "vitjan", "móttøka", "heilsaði", "myndir", "røða", "setti",
-    "luttók", "nevndarfundur",
+    "vitjan",
+    "móttøka",
+    "heilsaði",
+    "myndir",
+    "nevndarfundur",
     "fyrispurningar og svar",
     "spurningar og svar",
-    "2014", "2015", "2016", "2017", "2018", "2019",
 ]
-
-HEADERS = {
-    "User-Agent": "fo-ministry-watch/1.0"
-}
 
 
 def load_state():
@@ -87,19 +108,33 @@ def load_sources():
     return sources
 
 
+def clean_text(text):
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
 def item_id(url, title):
     base_text = (url or "") + "|" + (title or "")
     return hashlib.sha256(base_text.encode("utf-8")).hexdigest()
-
-
-def clean_text(text):
-    return re.sub(r"\s+", " ", text or "").strip()
 
 
 def fetch_html(url):
     response = requests.get(url, headers=HEADERS, timeout=20)
     response.raise_for_status()
     return response.text
+
+
+def normalize_url(url):
+    parsed = urlparse(url)
+    return parsed.scheme + "://" + parsed.netloc + parsed.path.rstrip("/") + "/"
+
+
+def is_same_url(a, b):
+    return normalize_url(a) == normalize_url(b)
+
+
+def is_low_value_title(title):
+    title_lower = clean_text(title).lower()
+    return title_lower in LOW_VALUE_TITLES
 
 
 def looks_like_old_archive_item(title, url):
@@ -110,9 +145,50 @@ def looks_like_old_archive_item(title, url):
         "fyrispurningar og svar 201",
         "spurningar-og-svar-201",
         "spurningar og svar 201",
+        "/2014/",
+        "/2015/",
+        "/2016/",
+        "/2017/",
+        "/2018/",
+        "/2019/",
     ]
 
     return any(pattern in text for pattern in old_archive_patterns)
+
+
+def is_probable_news_url(source_url, href):
+    source_lower = source_url.lower()
+    href_lower = href.lower()
+
+    if is_same_url(source_url, href):
+        return False
+
+    if "hoyringar" in source_lower:
+        return (
+            "/hoyringar/" in href_lower
+            and not is_same_url(source_url, href)
+        )
+
+    return (
+        "/fo/kunning/tidindi/" in href_lower
+        and not is_same_url(source_url, href)
+    )
+
+
+def extract_page_title(soup, fallback):
+    og_title = soup.find("meta", attrs={"property": "og:title"})
+    if og_title and og_title.get("content"):
+        title = clean_text(og_title.get("content"))
+        if title:
+            return title
+
+    h1 = soup.find("h1")
+    if h1:
+        title = clean_text(h1.get_text(" ", strip=True))
+        if title:
+            return title
+
+    return fallback
 
 
 def extract_description_from_page(url):
@@ -122,20 +198,45 @@ def extract_description_from_page(url):
 
         meta = soup.find("meta", attrs={"name": "description"})
         if meta and meta.get("content"):
-            return clean_text(meta.get("content"))[:350]
+            text = clean_text(meta.get("content"))
+            if len(text) >= 40:
+                return text[:500]
 
         og = soup.find("meta", attrs={"property": "og:description"})
         if og and og.get("content"):
-            return clean_text(og.get("content"))[:350]
+            text = clean_text(og.get("content"))
+            if len(text) >= 40:
+                return text[:500]
 
         paragraphs = []
+
         for p in soup.find_all("p"):
             text = clean_text(p.get_text(" ", strip=True))
-            if len(text) >= 50:
-                paragraphs.append(text)
+
+            if len(text) < 60:
+                continue
+
+            lower = text.lower()
+
+            skip_phrases = [
+                "cookies",
+                "far til innihald",
+                "les meira",
+                "deil",
+                "facebook",
+                "linkedin",
+                "twitter",
+                "teldupost",
+                "©",
+            ]
+
+            if any(skip in lower for skip in skip_phrases):
+                continue
+
+            paragraphs.append(text)
 
         if paragraphs:
-            return paragraphs[0][:350]
+            return paragraphs[0][:500]
 
     except Exception:
         return ""
@@ -151,9 +252,9 @@ def extract_items(source):
     candidates = []
 
     for a in soup.find_all("a", href=True):
-        title = clean_text(a.get_text(" ", strip=True))
+        raw_title = clean_text(a.get_text(" ", strip=True))
 
-        if len(title) < 8:
+        if len(raw_title) < 8:
             continue
 
         href = urljoin(base_url, a["href"])
@@ -161,40 +262,28 @@ def extract_items(source):
         if href.startswith("mailto:") or href.startswith("tel:"):
             continue
 
-        lower_href = href.lower()
-        lower_title = title.lower()
-
-        if looks_like_old_archive_item(title, href):
+        if not is_probable_news_url(source["url"], href):
             continue
 
-        if lower_title in ["les meira", "meira", "sí meira", "read more"]:
+        if is_low_value_title(raw_title):
             continue
 
-        looks_relevant = (
-            "/tidindi" in lower_href
-            or "/kunning" in lower_href
-            or "/hoyring" in lower_href
-            or "/ummali" in lower_href
-            or "/ummæli" in lower_href
-            or any(k in lower_title for k in MEANINGFUL_KEYWORDS)
-        )
-
-        if not looks_relevant:
+        if looks_like_old_archive_item(raw_title, href):
             continue
 
         candidates.append({
             "source": source["name"],
-            "title": title[:180],
+            "title": raw_title[:180],
             "url": href,
             "summary": "",
-            "id": item_id(href, title),
+            "id": item_id(href, raw_title),
         })
 
     seen_urls = set()
     unique = []
 
     for item in candidates:
-        key = item["url"]
+        key = normalize_url(item["url"])
 
         if key in seen_urls:
             continue
@@ -208,23 +297,18 @@ def extract_items(source):
 def is_meaningful(item):
     text = f"{item.get('source', '')} {item.get('title', '')} {item.get('summary', '')} {item.get('url', '')}".lower()
 
+    if is_low_value_title(item.get("title", "")):
+        return False
+
     if looks_like_old_archive_item(item.get("title", ""), item.get("url", "")):
         return False
 
     if any(k in text for k in LOW_VALUE_KEYWORDS):
         return False
 
-    if any(k in text for k in MEANINGFUL_KEYWORDS):
-        return True
-
-    return len(item.get("title", "")) >= 20
-
-
-def make_summary(item):
-    if item.get("summary"):
-        return item["summary"]
-
-    return item["title"]
+    # Tá URL’in er ein verulig tíðinda-/hoyringarsíða, taka vit hana við,
+    # hóast heitið ikki altíð inniheldur sterkt politiskt lyklaorð.
+    return True
 
 
 def enrich_items(items):
@@ -232,10 +316,34 @@ def enrich_items(items):
 
     for item in items:
         item = dict(item)
+
+        try:
+            html = fetch_html(item["url"])
+            soup = BeautifulSoup(html, "html.parser")
+            item["title"] = extract_page_title(soup, item["title"])
+        except Exception:
+            pass
+
         item["summary"] = extract_description_from_page(item["url"])
+
+        if not item["summary"]:
+            item["summary"] = item["title"]
+
         enriched.append(item)
 
     return enriched
+
+
+def make_summary(item):
+    summary = clean_text(item.get("summary", ""))
+
+    if not summary:
+        return item["title"]
+
+    if summary == item["title"]:
+        return item["title"]
+
+    return summary
 
 
 def build_issue_body(items):
@@ -251,11 +359,11 @@ def build_issue_body(items):
         lines.append("")
         lines.append(f"**Kelda:** {item['source']}")
         lines.append("")
-        lines.append("**Stuttur samandráttur:**")
+        lines.append("**Samandráttur:**")
         lines.append("")
         lines.append(make_summary(item))
         lines.append("")
-        lines.append(f"**Leinki:** {item['url']}")
+        lines.append(f"**Les meira:** {item['url']}")
         lines.append("")
 
     lines.append("---")
@@ -279,7 +387,6 @@ def create_github_issue(title, body):
     payload = {
         "title": title,
         "body": body,
-        "labels": ["stjórnarráðini"],
     }
 
     headers = {
@@ -289,12 +396,6 @@ def create_github_issue(title, body):
     }
 
     response = requests.post(url, headers=headers, json=payload, timeout=20)
-
-    # If labels fail because the label does not exist, retry without labels.
-    if response.status_code == 422:
-        payload.pop("labels", None)
-        response = requests.post(url, headers=headers, json=payload, timeout=20)
-
     response.raise_for_status()
 
     return response.json().get("html_url")
