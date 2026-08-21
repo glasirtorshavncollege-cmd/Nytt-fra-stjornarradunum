@@ -1,0 +1,30 @@
+sources:
+  - name: Løgmansskrivstovan
+    url: https://www.lms.fo/fo/kunning/tidindi/
+
+  - name: Fíggjarmálaráðið
+    url: https://www.fmr.fo/fo/kunning/tidindi/
+
+  - name: Uttanríkis- og vinnumálaráðið
+    url: https://www.uvmr.fo/fo/kunning/tidindi/
+
+  - name: Fiskivinnu- og samferðslumálaráðið
+    url: https://www.fisk.fo/fo/kunning/tidindi/
+
+  - name: Almanna- og bústaðamálaráðið
+    url: https://www.abm.fo/fo/kunning/tidindi/
+
+  - name: Heilsumálaráðið
+    url: https://www.hmr.fo/fo/kunning/tidindi/
+
+  - name: Barna- og útbúgvingarmálaráðið
+    url: https://www.bumr.fo/fo/kunning/tidindi/
+
+  - name: Mentamálaráðið
+    url: https://www.mentan.fo/fo/kunning/tidindi/
+
+  - name: Umhvørvismálaráðið
+    url: https://www.umhvorvi.fo/fo/kunning/tidindi/
+
+  - name: Hoyringar
+    url: https://www.foroyalandsstyri.fo/fo/kunning/hoyringar/
