@@ -16,6 +16,8 @@ SOURCES_FILE = "sources.yml"
 MAX_ITEMS_PER_SOURCE = 8
 MAX_ITEMS_IN_ISSUE = 10
 
+NOTIFY_USER = "glasirtorshavncollege-cmd"
+
 MEANINGFUL_KEYWORDS = [
     "lóg", "lógar", "lógaruppskot", "kunngerð", "kunngerðir", "uppskot",
     "hoyring", "ummæli", "ummælis", "freist", "avgerð", "samtykt", "játtan",
@@ -205,6 +207,8 @@ def build_issue_body(items):
 
     lines.append("## Nýtt frá stjórnarráðunum")
     lines.append("")
+    lines.append(f"@{NOTIFY_USER}")
+    lines.append("")
     lines.append("Her er stuttur samandráttur av nýggjum almennum dagføringum frá stjórnarráðunum.")
     lines.append("")
 
@@ -221,7 +225,6 @@ def build_issue_body(items):
     lines.append("---")
     lines.append(f"Automatiskt stovnað: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
 
-    # IMPORTANT: This must be "\n", not "\\n".
     return "\n".join(lines)
 
 
@@ -237,19 +240,26 @@ def create_github_issue(title, body):
 
     url = f"https://api.github.com/repos/{repo}/issues"
 
-    payload = {
-        "title": title,
-        "body": body,
-        "labels": ["stjórnarráðini", "automatisk dagføring"],
-    }
-
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "User-Agent": "fo-ministry-watch/1.0",
     }
 
+    payload = {
+        "title": title,
+        "body": body,
+        "assignees": [NOTIFY_USER],
+    }
+
     response = requests.post(url, headers=headers, json=payload, timeout=20)
+
+    # If assigning fails, create the issue anyway.
+    if response.status_code == 422:
+        print("WARNING: Could not assign issue. Retrying without assignee.")
+        payload.pop("assignees", None)
+        response = requests.post(url, headers=headers, json=payload, timeout=20)
+
     response.raise_for_status()
 
     return response.json().get("html_url")
