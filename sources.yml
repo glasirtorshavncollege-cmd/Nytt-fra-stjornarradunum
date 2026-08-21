@@ -12,19 +12,16 @@ sources:
     url: https://www.fisk.fo/fo/kunning/tidindi/
 
   - name: Almanna- og bústaðamálaráðið
-    url: https://www.abm.fo/fo/kunning/tidindi/
+    url: https://www.abmr.fo/fo/kunning/tidindi/
 
   - name: Heilsumálaráðið
     url: https://www.hmr.fo/fo/kunning/tidindi/
 
-  - name: Barna- og útbúgvingarmálaráðið
-    url: https://www.bumr.fo/fo/kunning/tidindi/
-
   - name: Mentamálaráðið
-    url: https://www.mentan.fo/fo/kunning/tidindi/
+    url: https://www.mmr.fo/fo/kunning/tidindi/
 
   - name: Umhvørvismálaráðið
     url: https://www.umhvorvi.fo/fo/kunning/tidindi/
 
   - name: Hoyringar
-    url: https://www.foroyalandsstyri.fo/fo/kunning/hoyringar/
+    url: https://www.foroyalandsstyri.fo/fo/kunning/uppskot-til-ummaelis/
