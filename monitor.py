@@ -13,10 +13,8 @@ from bs4 import BeautifulSoup
 STATE_FILE = "state.json"
 SOURCES_FILE = "sources.yml"
 
-MAX_ITEMS_PER_SOURCE = 8
-MAX_ITEMS_IN_ISSUE = 10
-
-NOTIFY_USER = "glasirtorshavncollege-cmd"
+MAX_ITEMS_PER_SOURCE = 6
+MAX_ITEMS_IN_ISSUE = 8
 
 MEANINGFUL_KEYWORDS = [
     "lóg", "lógar", "lógaruppskot", "kunngerð", "kunngerðir", "uppskot",
@@ -58,8 +56,6 @@ def load_state():
 
 def save_state(state):
     state["updated_at"] = datetime.now(timezone.utc).isoformat()
-
-    # Keep state file reasonably small.
     state["seen"] = list(dict.fromkeys(state.get("seen", [])))[-1000:]
 
     with open(STATE_FILE, "w", encoding="utf-8") as f:
@@ -119,6 +115,34 @@ def looks_like_old_archive_item(title, url):
     return any(pattern in text for pattern in old_archive_patterns)
 
 
+def extract_description_from_page(url):
+    try:
+        html = fetch_html(url)
+        soup = BeautifulSoup(html, "html.parser")
+
+        meta = soup.find("meta", attrs={"name": "description"})
+        if meta and meta.get("content"):
+            return clean_text(meta.get("content"))[:350]
+
+        og = soup.find("meta", attrs={"property": "og:description"})
+        if og and og.get("content"):
+            return clean_text(og.get("content"))[:350]
+
+        paragraphs = []
+        for p in soup.find_all("p"):
+            text = clean_text(p.get_text(" ", strip=True))
+            if len(text) >= 50:
+                paragraphs.append(text)
+
+        if paragraphs:
+            return paragraphs[0][:350]
+
+    except Exception:
+        return ""
+
+    return ""
+
+
 def extract_items(source):
     html = fetch_html(source["url"])
     soup = BeautifulSoup(html, "html.parser")
@@ -143,7 +167,6 @@ def extract_items(source):
         if looks_like_old_archive_item(title, href):
             continue
 
-        # Avoid navigation/footer noise.
         if lower_title in ["les meira", "meira", "sí meira", "read more"]:
             continue
 
@@ -167,7 +190,6 @@ def extract_items(source):
             "id": item_id(href, title),
         })
 
-    # Deduplicate while preserving order.
     seen_urls = set()
     unique = []
 
@@ -199,15 +221,27 @@ def is_meaningful(item):
 
 
 def make_summary(item):
+    if item.get("summary"):
+        return item["summary"]
+
     return item["title"]
+
+
+def enrich_items(items):
+    enriched = []
+
+    for item in items:
+        item = dict(item)
+        item["summary"] = extract_description_from_page(item["url"])
+        enriched.append(item)
+
+    return enriched
 
 
 def build_issue_body(items):
     lines = []
 
     lines.append("## Nýtt frá stjórnarráðunum")
-    lines.append("")
-    lines.append(f"@{NOTIFY_USER}")
     lines.append("")
     lines.append("Her er stuttur samandráttur av nýggjum almennum dagføringum frá stjórnarráðunum.")
     lines.append("")
@@ -217,7 +251,9 @@ def build_issue_body(items):
         lines.append("")
         lines.append(f"**Kelda:** {item['source']}")
         lines.append("")
-        lines.append(f"**Stuttur samandráttur:** {make_summary(item)}")
+        lines.append("**Stuttur samandráttur:**")
+        lines.append("")
+        lines.append(make_summary(item))
         lines.append("")
         lines.append(f"**Leinki:** {item['url']}")
         lines.append("")
@@ -240,24 +276,23 @@ def create_github_issue(title, body):
 
     url = f"https://api.github.com/repos/{repo}/issues"
 
+    payload = {
+        "title": title,
+        "body": body,
+        "labels": ["stjórnarráðini"],
+    }
+
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "User-Agent": "fo-ministry-watch/1.0",
     }
 
-    payload = {
-        "title": title,
-        "body": body,
-        "assignees": [NOTIFY_USER],
-    }
-
     response = requests.post(url, headers=headers, json=payload, timeout=20)
 
-    # If assigning fails, create the issue anyway.
+    # If labels fail because the label does not exist, retry without labels.
     if response.status_code == 422:
-        print("WARNING: Could not assign issue. Retrying without assignee.")
-        payload.pop("assignees", None)
+        payload.pop("labels", None)
         response = requests.post(url, headers=headers, json=payload, timeout=20)
 
     response.raise_for_status()
@@ -296,6 +331,7 @@ def main():
         return
 
     new_items = new_items[:MAX_ITEMS_IN_ISSUE]
+    new_items = enrich_items(new_items)
 
     today = datetime.now().strftime("%d.%m.%Y")
     issue_title = f"Nýtt frá stjórnarráðunum - {today}"
