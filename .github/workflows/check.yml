@@ -6,8 +6,12 @@ on:
       - main
 
   schedule:
-    # Koyrir eina ferð um dagin kl. 06:30 UTC
+    # Koyrir tríggjar ferðir um dagin.
+    # Tíðirnar eru UTC:
+    # 06:30, 10:30 og 14:30 UTC
     - cron: "30 6 * * *"
+    - cron: "30 10 * * *"
+    - cron: "30 14 * * *"
 
   workflow_dispatch:
 
@@ -57,12 +61,6 @@ jobs:
         run: python monitor.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-          MAIL_FROM: ${{ secrets.MAIL_FROM }}
-          MAIL_TO: ${{ secrets.MAIL_TO }}
 
       - name: Commit updated state
         run: |
