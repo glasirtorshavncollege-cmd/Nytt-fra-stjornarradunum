@@ -25,6 +25,7 @@ MINISTRY_BY_DOMAIN = {
     "mmr.fo": "Mentamálaráðið",
     "ufmr.fo": "Uttanríkis- og fiskimálaráðið",
     "vmr.fo": "Vinnumálaráðið",
+    "lum.fo": "Løgtingsins umboðsmaður",
 }
 
 ALLOWED_DOMAINS = set(MINISTRY_BY_DOMAIN.keys()) | {
@@ -35,6 +36,7 @@ ALLOWED_DOMAINS = set(MINISTRY_BY_DOMAIN.keys()) | {
     "www.mmr.fo",
     "www.ufmr.fo",
     "www.vmr.fo",
+    "www.lum.fo",
     "government.fo",
     "www.government.fo",
     "foroyalandsstyri.fo",
@@ -62,12 +64,23 @@ LOW_VALUE_TITLES = [
     "almanna- og bústaðamálaráðið",
     "heilsu- og orkumálaráðið",
     "vinnumálaráðið",
+    "løgtingsins umboðsmaður",
 ]
 
 LOW_VALUE_KEYWORDS = [
     "myndir",
     "fyrispurningar og svar",
     "spurningar og svar",
+]
+
+LUM_BLOCKED_URL_PARTS = [
+    "/um-embaeti",
+    "/loggava",
+    "/english",
+    "/samband",
+    "/files/",
+    "/ajaxfilter",
+    "?id=",
 ]
 
 
@@ -231,6 +244,31 @@ def is_allowed_url(url):
     return host_no_www in MINISTRY_BY_DOMAIN
 
 
+def is_probable_lum_news_url(source_url, href):
+    href_lower = href.lower()
+    source_host = domain_without_www(source_url)
+    href_host = domain_without_www(href)
+
+    if href_host != "lum.fo" and not href_host.endswith(".lum.fo"):
+        return False
+
+    if is_same_url(source_url, href):
+        return False
+
+    if any(part in href_lower for part in LUM_BLOCKED_URL_PARTS):
+        return False
+
+    parsed = urlparse(href)
+    path = parsed.path.strip("/")
+
+    if not path:
+        return False
+
+    # LUM hevur ofta nýggjasta-innlegg sum beinleiðis slóðir á rótini.
+    # Vit taka tí eina rót-slóð við, um hon ikki er ein vanlig navigatiónssíða.
+    return True
+
+
 def is_probable_news_url(source_url, href):
     source_lower = source_url.lower()
     href_lower = href.lower()
@@ -238,10 +276,17 @@ def is_probable_news_url(source_url, href):
     if is_same_url(source_url, href):
         return False
 
+    if "lum.fo" in source_lower or "lum.fo" in href_lower:
+        return is_probable_lum_news_url(source_url, href)
+
     if "hoyringar" in source_lower:
         return "/hoyringar/" in href_lower
 
-    return "/fo/kunning/tidindi/" in href_lower or "/kunning/tidindi/" in href_lower or "/tidindi/" in href_lower
+    return (
+        "/fo/kunning/tidindi/" in href_lower
+        or "/kunning/tidindi/" in href_lower
+        or "/tidindi/" in href_lower
+    )
 
 
 def extract_page_title(soup, fallback):
@@ -435,7 +480,7 @@ def build_issue_body(items):
 
     lines.append("## Nýtt frá stjórnarráðunum")
     lines.append("")
-    lines.append("Her er stuttur samandráttur av nýggjum almennum dagføringum frá stjórnarráðunum.")
+    lines.append("Her er stuttur samandráttur av nýggjum almennum dagføringum frá stjórnarráðunum og Løgtingsins umboðsmanni.")
     lines.append("")
 
     for i, item in enumerate(items, 1):
@@ -449,7 +494,7 @@ def build_issue_body(items):
         lines.append("")
         lines.append("**Hví hevur hetta týdning?**")
         lines.append("")
-        lines.append("Hetta er nýggj almenn kunning frá einum føroyskum stjórnarráði og kann hava týdning fyri politikk, umsiting, borgarar, skúlar ella stovnar.")
+        lines.append("Hetta er nýggj almenn kunning frá einum almennum føroyskum myndugleika og kann hava týdning fyri politikk, umsiting, borgarar, skúlar ella stovnar.")
         lines.append("")
         lines.append(f"**Les meira:** {item['url']}")
         lines.append("")

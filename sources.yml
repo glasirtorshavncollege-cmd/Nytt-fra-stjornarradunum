@@ -1,27 +1,23 @@
-sources:
-  - name: Løgmansskrivstovan
-    url: https://www.lms.fo/fo/kunning/tidindi/
+- name: Almanna- og bústaðamálaráðið
+  url: https://www.abmr.fo/fo/kunning/tidindi/
 
-  - name: Fíggjarmálaráðið
-    url: https://www.fmr.fo/fo/kunning/tidindi/
+- name: Fíggjarmálaráðið
+  url: https://www.fmr.fo/fo/kunning/tidindi/
 
-  - name: Uttanríkis- og vinnumálaráðið
-    url: https://www.uvmr.fo/fo/kunning/tidindi/
+- name: Heilsu- og orkumálaráðið
+  url: https://www.homr.fo/fo/kunning/tidindi/
 
-  - name: Fiskivinnu- og samferðslumálaráðið
-    url: https://www.fisk.fo/fo/kunning/tidindi/
+- name: Løgmansskrivstovan
+  url: https://www.lms.fo/fo/kunning/tidindi/
 
-  - name: Almanna- og bústaðamálaráðið
-    url: https://www.abmr.fo/fo/kunning/tidindi/
+- name: Mentamálaráðið
+  url: https://www.mmr.fo/fo/kunning/tidindi/
 
-  - name: Heilsumálaráðið
-    url: https://www.hmr.fo/fo/kunning/tidindi/
+- name: Uttanríkis- og fiskimálaráðið
+  url: https://www.ufmr.fo/fo/kunning/tidindi/
 
-  - name: Mentamálaráðið
-    url: https://www.mmr.fo/fo/kunning/tidindi/
+- name: Vinnumálaráðið
+  url: https://www.vmr.fo/fo/kunning/tidindi/
 
-  - name: Umhvørvismálaráðið
-    url: https://www.umhvorvi.fo/fo/kunning/tidindi/
-
-  - name: Hoyringar
-    url: https://www.foroyalandsstyri.fo/fo/kunning/uppskot-til-ummaelis/
+- name: Løgtingsins umboðsmaður
+  url: https://www.lum.fo/
