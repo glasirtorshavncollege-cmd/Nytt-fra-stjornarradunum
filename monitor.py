@@ -289,6 +289,109 @@ def is_probable_news_url(source_url, href):
     )
 
 
+
+def is_lum_url(url):
+    host = domain_without_www(url)
+    return host == "lum.fo" or host.endswith(".lum.fo")
+
+
+def nearest_card_text(element):
+    # LUM hevur kort í Nýggjasta-blokkinum. Vit royna at finna tað næsta
+    # kortið kring "Les meira"-leinkið og nýta síðani sjálva greinina til
+    # endaliga yvirskrift/samandrátt í enrich_items().
+    for parent_name in ["article", "li", "div"]:
+        parent = element.find_parent(parent_name)
+        if parent:
+            text = clean_text(parent.get_text(" ", strip=True))
+            if text:
+                return text
+    return clean_text(element.get_text(" ", strip=True))
+
+
+def find_lum_latest_container(soup):
+    heading = soup.find(
+        lambda tag: tag.name in ["h1", "h2", "h3", "h4"]
+        and clean_text(tag.get_text(" ", strip=True)).lower() == "nýggjasta"
+    )
+
+    if not heading:
+        return None
+
+    # Vel minsta foreldrablokk, sum hevur fleiri "Les meira"-leinki.
+    # Hetta rakar Nýggjasta-blokkin og ikki alla síðuna.
+    parent = heading
+    for _ in range(8):
+        parent = parent.find_parent(["section", "div", "main"])
+        if not parent:
+            break
+
+        read_more_links = [
+            a for a in parent.find_all("a", href=True)
+            if "les meira" in clean_text(a.get_text(" ", strip=True)).lower()
+        ]
+
+        if 2 <= len(read_more_links) <= 8:
+            return parent
+
+    return heading.find_parent(["section", "div", "main"])
+
+
+def extract_lum_latest_items(source):
+    html = fetch_html(source["url"])
+    soup = BeautifulSoup(html, "html.parser")
+    base_url = source["url"]
+
+    latest = find_lum_latest_container(soup)
+    if not latest:
+        print("WARNING: Fann ikki Nýggjasta-blokkin á lum.fo")
+        return []
+
+    candidates = []
+
+    for a in latest.find_all("a", href=True):
+        link_text = clean_text(a.get_text(" ", strip=True))
+
+        # Í Nýggjasta-blokkinum er trygga signalið "Les meira".
+        if "les meira" not in link_text.lower():
+            continue
+
+        href = normalize_url(urljoin(base_url, a["href"]))
+
+        if not href.startswith("http"):
+            continue
+
+        if not is_lum_url(href):
+            continue
+
+        if is_same_url(base_url, href):
+            continue
+
+        if any(part in href.lower() for part in LUM_BLOCKED_URL_PARTS):
+            continue
+
+        card_text = nearest_card_text(a)
+        title_hint = card_text.replace("Les meira", "").strip() or href.rsplit("/", 1)[-1]
+
+        candidates.append({
+            "source": "Løgtingsins umboðsmaður",
+            "title": title_hint[:180],
+            "url": href,
+            "summary": "",
+            "id": item_id(href, title_hint),
+        })
+
+    seen_urls = set()
+    unique = []
+
+    for item in candidates:
+        key = normalize_url(item["url"])
+        if key in seen_urls:
+            continue
+        seen_urls.add(key)
+        unique.append(item)
+
+    return unique[:MAX_ITEMS_PER_SOURCE]
+
 def extract_page_title(soup, fallback):
     og_title = soup.find("meta", attrs={"property": "og:title"})
     if og_title and og_title.get("content"):
@@ -364,6 +467,9 @@ def extract_description_from_page(url):
 
 
 def extract_items(source):
+    if is_lum_url(source.get("url", "")):
+        return extract_lum_latest_items(source)
+
     html = fetch_html(source["url"])
     soup = BeautifulSoup(html, "html.parser")
     base_url = source["url"]
