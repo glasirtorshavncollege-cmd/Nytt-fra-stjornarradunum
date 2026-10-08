@@ -13,8 +13,8 @@ from bs4 import BeautifulSoup
 STATE_FILE = "state.json"
 SOURCES_FILE = "sources.yml"
 
-MAX_ITEMS_PER_SOURCE = 6
-MAX_ITEMS_IN_ISSUE = 8
+MAX_ITEMS_PER_SOURCE = 8
+MAX_ITEMS_IN_ISSUE = 12
 REQUEST_TIMEOUT = 20
 
 MINISTRY_BY_DOMAIN = {
@@ -66,8 +66,6 @@ LOW_VALUE_TITLES = [
     "almanna- og bústaðamálaráðið",
     "heilsu- og orkumálaráðið",
     "vinnumálaráðið",
-    "løgtingsins umboðsmaður",
-    "løgtingið",
 ]
 
 LOW_VALUE_KEYWORDS = [
@@ -76,15 +74,9 @@ LOW_VALUE_KEYWORDS = [
     "spurningar og svar",
 ]
 
-LUM_BLOCKED_URL_PARTS = [
-    "/um-embaeti",
-    "/loggava",
-    "/english",
-    "/samband",
-    "/files/",
-    "/ajaxfilter",
-    "?id=",
-]
+
+def log(message):
+    print(message, flush=True)
 
 
 def clean_text(text):
@@ -125,3 +117,11 @@ def ministry_from_url(url, fallback="Føroya landsstýri"):
     for domain, ministry in MINISTRY_BY_DOMAIN.items():
         if host == domain or host.endswith("." + domain):
             return ministry
+
+    return fallback or "Føroya landsstýri"
+
+
+def item_id(url, title):
+    base_text = normalize_url(url) + "|" + clean_text(title)
+    return hashlib.sha256(base_text.encode("utf-8")).hexdigest()
+
