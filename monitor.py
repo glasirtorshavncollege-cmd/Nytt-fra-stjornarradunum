@@ -625,6 +625,38 @@ def create_github_issue(title, body):
     return response.json().get("html_url")
 
 
+def update_public_feed(items):
+    """Update the public, non-sensitive article feed for the static PWA."""
+    feed_path = os.path.join("docs", "feed.json")
+    os.makedirs("docs", exist_ok=True)
+
+    try:
+        with open(feed_path, "r", encoding="utf-8") as file:
+            feed = json.load(file)
+        if not isinstance(feed, list):
+            feed = []
+    except (OSError, json.JSONDecodeError):
+        feed = []
+
+    existing = {item.get("id") for item in feed if isinstance(item, dict)}
+    published_at = datetime.now(timezone.utc).isoformat()
+    for item in items:
+        if item["id"] in existing:
+            continue
+        feed.insert(0, {
+            "id": item["id"],
+            "title": clean_text(item["title"]),
+            "source": clean_text(item["source"]),
+            "summary": make_summary(item),
+            "url": item["url"],
+            "found_at": published_at,
+        })
+        existing.add(item["id"])
+
+    with open(feed_path, "w", encoding="utf-8") as file:
+        json.dump(feed[:500], file, ensure_ascii=False, indent=2)
+
+
 def main():
     state = load_state()
     seen = set(state.get("seen", []))
@@ -684,6 +716,7 @@ def main():
     issue_body = build_issue_body(new_items)
 
     issue_url = create_github_issue(issue_title, issue_body)
+    update_public_feed(new_items)
 
     log("Issue created: yes")
     log(f"Created issue: {issue_url}")
