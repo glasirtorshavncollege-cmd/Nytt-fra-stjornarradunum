@@ -1,3 +1,5 @@
+
+import argparse
 import hashlib
 import json
 import os
@@ -413,7 +415,9 @@ def extract_items(source):
         if looks_like_old_archive_item(raw_title, href):
             continue
 
-        correct_source = ministry_from_url(href, source.get("name", "Føroya landsstýri"))
+        correct_source = ministry_from_url(
+            href, source.get("name", "Føroya landsstýri")
+        )
 
         candidates.append({
             "source": correct_source,
@@ -439,12 +443,19 @@ def extract_items(source):
 
 
 def is_meaningful(item):
-    text = f"{item.get('source', '')} {item.get('title', '')} {item.get('summary', '')} {item.get('url', '')}".lower()
+    text = (
+        f"{item.get('source', '')} "
+        f"{item.get('title', '')} "
+        f"{item.get('summary', '')} "
+        f"{item.get('url', '')}"
+    ).lower()
 
     if is_low_value_title(item.get("title", "")):
         return False
 
-    if looks_like_old_archive_item(item.get("title", ""), item.get("url", "")):
+    if looks_like_old_archive_item(
+        item.get("title", ""), item.get("url", "")
+    ):
         return False
 
     if any(k in text for k in LOW_VALUE_KEYWORDS):
@@ -541,7 +552,9 @@ def enrich_items(items):
         except Exception:
             pass
 
-        item["source"] = ministry_from_url(item["url"], item.get("source", "Føroya landsstýri"))
+        item["source"] = ministry_from_url(
+            item["url"], item.get("source", "Føroya landsstýri")
+        )
         item["summary"] = extract_description_from_page(item["url"])
 
         if not item["summary"]:
@@ -571,7 +584,10 @@ def build_issue_body(items):
 
     lines.append("## Nýtt frá stjórnarráðunum")
     lines.append("")
-    lines.append("Her er stuttur samandráttur av nýggjum almennum dagføringum frá stjórnarráðunum, LUM og Løgtinginum.")
+    lines.append(
+        "Her er stuttur samandráttur av nýggjum almennum "
+        "dagføringum frá stjórnarráðunum, LUM og Løgtinginum."
+    )
     lines.append("")
 
     for i, item in enumerate(items, 1):
@@ -585,13 +601,19 @@ def build_issue_body(items):
         lines.append("")
         lines.append("**Hví hevur hetta týdning?**")
         lines.append("")
-        lines.append("Hetta er nýggj almenn kunning, sum kann hava týdning fyri politikk, umsiting, borgarar, skúlar ella stovnar.")
+        lines.append(
+            "Hetta er nýggj almenn kunning, sum kann hava týdning "
+            "fyri politikk, umsiting, borgarar, skúlar ella stovnar."
+        )
         lines.append("")
         lines.append(f"**Les meira:** {item['url']}")
         lines.append("")
 
     lines.append("---")
-    lines.append(f"Automatiskt stovnað: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    lines.append(
+        "Automatiskt stovnað: "
+        + datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    )
 
     return "\n".join(lines)
 
@@ -619,14 +641,16 @@ def create_github_issue(title, body):
         "User-Agent": "fo-ministry-watch/1.0",
     }
 
-    response = requests.post(url, headers=headers, json=payload, timeout=20)
+    response = requests.post(
+        url, headers=headers, json=payload, timeout=20
+    )
     response.raise_for_status()
 
     return response.json().get("html_url")
 
 
 def update_public_feed(items):
-    """Update the public, non-sensitive article feed for the static PWA."""
+    """Save public articles, deduplicated by URL."""
     feed_path = os.path.join("docs", "feed.json")
     os.makedirs("docs", exist_ok=True)
 
@@ -634,92 +658,210 @@ def update_public_feed(items):
         with open(feed_path, "r", encoding="utf-8") as file:
             feed = json.load(file)
         if not isinstance(feed, list):
-            feed = []
-    except (OSError, json.JSONDecodeError):
+            raise ValueError("docs/feed.json must contain a JSON list")
+    except FileNotFoundError:
         feed = []
 
-    existing = {item.get("id") for item in feed if isinstance(item, dict)}
-    published_at = datetime.now(timezone.utc).isoformat()
+    existing_urls = {
+        normalize_url(article.get("url", ""))
+        for article in feed
+        if isinstance(article, dict)
+    }
+
+    found_at = datetime.now(timezone.utc).isoformat()
+    added = 0
+
     for item in items:
-        if item["id"] in existing:
+        url = normalize_url(item["url"])
+        if url in existing_urls:
             continue
+
         feed.insert(0, {
             "id": item["id"],
             "title": clean_text(item["title"]),
             "source": clean_text(item["source"]),
             "summary": make_summary(item),
             "url": item["url"],
-            "found_at": published_at,
+            "found_at": found_at,
         })
-        existing.add(item["id"])
 
-    with open(feed_path, "w", encoding="utf-8") as file:
+        existing_urls.add(url)
+        added += 1
+
+    # Write atomically to avoid publishing incomplete JSON.
+    temporary = feed_path + ".tmp"
+
+    with open(temporary, "w", encoding="utf-8") as file:
         json.dump(feed[:500], file, ensure_ascii=False, indent=2)
+
+    os.replace(temporary, feed_path)
+    return added
+
+
+def collect_candidates(sources):
+    """Collect deduplicated candidates without changing saved state."""
+    candidates = []
+    urls = set()
+    checked_sources = 0
+
+    for source in sources:
+        source_name = source.get(
+            "name", source.get("url", "Ókend kelda")
+        )
+
+        try:
+            items = extract_items(source)
+            checked_sources += 1
+        except Exception as error:
+            log(
+                f"WARNING: Could not fetch {source_name}: {error}"
+            )
+            continue
+
+        for item in items:
+            url = normalize_url(item["url"])
+            if url not in urls:
+                candidates.append(item)
+                urls.add(url)
+
+        log(
+            f"Checked source: {source_name} | "
+            f"links found: {len(items)}"
+        )
+
+    return candidates, checked_sources
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Ministry news monitor"
+    )
+
+    mode = parser.add_mutually_exclusive_group()
+
+    mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Find potential updates but do not save files or send issues",
+    )
+
+    mode.add_argument(
+        "--backfill-feed",
+        action="store_true",
+        help=(
+            "Populate docs/feed.json from currently visible articles, "
+            "without issues or state changes"
+        ),
+    )
+
+    args = parser.parse_args()
+
     state = load_state()
     seen = set(state.get("seen", []))
     sources = load_sources()
 
     log(f"Configured sources: {len(sources)}")
 
-    new_items = []
-    checked_sources = 0
-    fetched_candidate_links = 0
-    already_seen = 0
+    candidates, checked = collect_candidates(sources)
 
-    for source in sources:
-        source_name = source.get("name", source.get("url", "Ókend kelda"))
+    log(f"Checked sources: {checked}")
+    log(f"Candidate links: {len(candidates)}")
 
-        try:
-            items = extract_items(source)
-            checked_sources += 1
-        except Exception as e:
-            log(f"WARNING: Could not fetch {source_name}: {e}")
-            continue
+    if args.backfill_feed:
+        # Reconstruct currently visible articles only.
+        selected = [
+            item for item in candidates
+            if is_meaningful(item)
+        ]
+        enriched = enrich_items(selected)
+        added = update_public_feed(enriched)
 
-        fetched_candidate_links += len(items)
-        source_new_count = 0
-
-        for item in items:
-            if item["id"] in seen:
-                already_seen += 1
-                continue
-
-            if is_meaningful(item):
-                new_items.append(item)
-                source_new_count += 1
-
-            seen.add(item["id"])
-
-        log(f"Checked source: {source_name} | links found: {len(items)} | new meaningful: {source_new_count}")
-
-    state["seen"] = list(seen)
-    save_state(state)
-
-    log(f"Checked sources: {checked_sources}")
-    log(f"Fetched candidate links: {fetched_candidate_links}")
-    log(f"Already seen: {already_seen}")
-    log(f"New meaningful updates: {len(new_items)}")
-
-    if not new_items:
-        log("Issue created: no")
-        log("No meaningful new updates found.")
+        log(
+            f"Backfill complete: {added} articles added "
+            "to docs/feed.json"
+        )
+        log(
+            "No GitHub Issue created; state.json unchanged"
+        )
         return
 
-    new_items = new_items[:MAX_ITEMS_IN_ISSUE]
-    new_items = enrich_items(new_items)
+    # Never mark unsent meaningful articles as processed.
+    new_items = []
+    rejected_ids = set()
 
-    today = datetime.now().strftime("%d.%m.%Y")
-    issue_title = f"Nýtt frá stjórnarráðunum - {today}"
-    issue_body = build_issue_body(new_items)
+    for item in candidates:
+        if item["id"] in seen:
+            continue
 
-    issue_url = create_github_issue(issue_title, issue_body)
-    update_public_feed(new_items)
+        if not is_meaningful(item):
+            rejected_ids.add(item["id"])
+        else:
+            new_items.append(item)
 
-    log("Issue created: yes")
+    log(f"New meaningful updates: {len(new_items)}")
+
+    selected = new_items[:MAX_ITEMS_IN_ISSUE]
+
+    if len(new_items) > len(selected):
+        log(
+            "Deferred to future runs: "
+            f"{len(new_items) - len(selected)}"
+        )
+
+    if args.dry_run:
+        for item in selected:
+            log(
+                f"PREVIEW: {item['source']} | "
+                f"{item['title']} | {item['url']}"
+            )
+
+        log(
+            "Dry run: state/feed unchanged; no GitHub Issue"
+        )
+        return
+
+    if not selected:
+        if rejected_ids:
+            state["seen"] = list(seen | rejected_ids)
+            save_state(state)
+
+        log(
+            "No meaningful new updates found; "
+            "no GitHub Issue"
+        )
+        return
+
+    enriched = enrich_items(selected)
+
+    today = datetime.now(timezone.utc).strftime(
+        "%d.%m.%Y"
+    )
+
+    issue_title = (
+        f"Nýtt frá stjórnarráðunum - {today}"
+    )
+    issue_body = build_issue_body(enriched)
+
+    # Do not save state if creating the issue fails.
+    issue_url = create_github_issue(
+        issue_title, issue_body
+    )
+
     log(f"Created issue: {issue_url}")
+
+    # A feed error leaves state untouched for recovery.
+    # In that rare case, a retry could create another issue.
+    added = update_public_feed(enriched)
+    log(f"Public feed articles added: {added}")
+
+    state["seen"] = list(
+        seen
+        | rejected_ids
+        | {item["id"] for item in selected}
+    )
+
+    save_state(state)
+    log("State updated")
 
 
 if __name__ == "__main__":
