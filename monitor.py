@@ -1,4 +1,3 @@
-
 import argparse
 import hashlib
 import json
@@ -213,6 +212,10 @@ def is_low_value_title(title):
     return clean_text(title).lower() in LOW_VALUE_TITLES
 
 
+def is_placeholder_title(title):
+    return clean_text(title).lower().rstrip(" .…") in {"les meira", "les meir", "read more", "more", "víðari"}
+
+
 def looks_like_old_archive_item(title, url):
     text = f"{title} {url}".lower()
 
@@ -352,13 +355,13 @@ def find_nearby_title(a_tag):
 
     for tag in parent.find_all(["h1", "h2", "h3", "h4", "strong"]):
         text = clean_text(tag.get_text(" "))
-        if len(text) >= 8 and text.lower() not in ["nýggjasta", "les meira", "les meir"]:
+        if len(text) >= 8 and text.lower() != "nýggjasta" and not is_placeholder_title(text):
             return text
 
     previous = parent.find_previous(["h1", "h2", "h3", "h4"])
     if previous:
         text = clean_text(previous.get_text(" "))
-        if len(text) >= 8:
+        if len(text) >= 8 and not is_placeholder_title(text):
             return text
 
     return ""
@@ -389,6 +392,9 @@ def extract_items(source):
             if not is_probable_news_url(source["url"], href):
                 continue
 
+            if is_placeholder_title(raw_title):
+                raw_title = find_nearby_title(a) or raw_title
+
             if is_low_value_title(raw_title):
                 continue
 
@@ -415,9 +421,7 @@ def extract_items(source):
         if looks_like_old_archive_item(raw_title, href):
             continue
 
-        correct_source = ministry_from_url(
-            href, source.get("name", "Føroya landsstýri")
-        )
+        correct_source = ministry_from_url(href, source.get("name", "Føroya landsstýri"))
 
         candidates.append({
             "source": correct_source,
@@ -443,19 +447,12 @@ def extract_items(source):
 
 
 def is_meaningful(item):
-    text = (
-        f"{item.get('source', '')} "
-        f"{item.get('title', '')} "
-        f"{item.get('summary', '')} "
-        f"{item.get('url', '')}"
-    ).lower()
+    text = f"{item.get('source', '')} {item.get('title', '')} {item.get('summary', '')} {item.get('url', '')}".lower()
 
     if is_low_value_title(item.get("title", "")):
         return False
 
-    if looks_like_old_archive_item(
-        item.get("title", ""), item.get("url", "")
-    ):
+    if looks_like_old_archive_item(item.get("title", ""), item.get("url", "")):
         return False
 
     if any(k in text for k in LOW_VALUE_KEYWORDS):
@@ -465,105 +462,137 @@ def is_meaningful(item):
 
 
 def extract_page_title(soup, fallback):
-    og_title = soup.find("meta", attrs={"property": "og:title"})
-    if og_title and og_title.get("content"):
-        title = clean_text(og_title.get("content"))
-        if title:
-            return title
+    """Use a real article heading; never present 'Les meira' as news."""
+    for attr, name in [("property", "og:title"), ("name", "twitter:title")]:
+        tag = soup.find("meta", attrs={attr: name})
+        if tag and tag.get("content"):
+            title = clean_text(tag["content"])
+            if len(title) >= 8 and not is_placeholder_title(title):
+                return title
 
-    h1 = soup.find("h1")
-    if h1:
-        title = clean_text(h1.get_text(" ", strip=True))
-        if title:
+    for tag in soup.find_all(["h1", "h2"], limit=20):
+        title = clean_text(tag.get_text(" ", strip=True))
+        if len(title) >= 8 and not is_placeholder_title(title):
             return title
 
     if soup.title:
         title = clean_text(soup.title.get_text(" ", strip=True))
-        if title:
+        if len(title) >= 8 and not is_placeholder_title(title):
             return title
 
-    return fallback
+    return fallback if not is_placeholder_title(fallback) else ""
 
 
-def extract_description_from_page(url):
+def parse_publication_date(value):
+    """Accept unambiguous ISO calendar dates, not dates embedded in prose."""
+    if not isinstance(value, str):
+        return None
+    match = re.match(r"^\s*(\d{4}-\d{2}-\d{2})(?:[Tt ]|$)", value)
+    if not match:
+        return None
     try:
-        html = fetch_html(url)
-        soup = BeautifulSoup(html, "html.parser")
+        date = datetime.strptime(match.group(1), "%Y-%m-%d").date()
+        if date > datetime.now(timezone.utc).date():
+            return None
+        return date.isoformat()
+    except ValueError:
+        return None
 
-        meta = soup.find("meta", attrs={"name": "description"})
-        if meta and meta.get("content"):
-            text = clean_text(meta.get("content"))
+
+def extract_published_at(soup):
+    """Only explicit machine-readable publication dates, no guessed dates."""
+    keys = [
+        ("property", "article:published_time"),
+        ("name", "article:published_time"),
+        ("name", "datePublished"),
+        ("itemprop", "datePublished"),
+        ("name", "publish-date"),
+        ("name", "pubdate"),
+        ("name", "DC.date.issued"),
+    ]
+    for key, value in keys:
+        tag = soup.find(["meta", "time"], attrs={key: value})
+        if tag:
+            day = parse_publication_date(tag.get("content") or tag.get("datetime"))
+            if day:
+                return day
+
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        try:
+            obj = json.loads(script.string or script.get_text())
+        except (ValueError, TypeError):
+            continue
+        def walk(node):
+            if isinstance(node, dict):
+                kinds = node.get("@type", [])
+                kinds = [kinds] if isinstance(kinds, str) else kinds
+                if any(str(k).lower() in {"newsarticle", "article", "blogposting", "reportage"} for k in kinds):
+                    day = parse_publication_date(node.get("datePublished"))
+                    if day:
+                        return day
+                for child in node.values():
+                    day = walk(child)
+                    if day:
+                        return day
+            elif isinstance(node, list):
+                for child in node:
+                    day = walk(child)
+                    if day:
+                        return day
+            return None
+        day = walk(obj)
+        if day:
+            return day
+
+    for tag in soup.find_all("time", attrs={"datetime": True}, limit=15):
+        day = parse_publication_date(tag.get("datetime"))
+        if day:
+            return day
+    return None
+
+
+def extract_description_from_soup(soup):
+    for attrs in [{"name": "description"}, {"property": "og:description"}]:
+        tag = soup.find("meta", attrs=attrs)
+        if tag and tag.get("content"):
+            text = clean_text(tag["content"])
             if len(text) >= 40:
                 return text[:900]
 
-        og = soup.find("meta", attrs={"property": "og:description"})
-        if og and og.get("content"):
-            text = clean_text(og.get("content"))
-            if len(text) >= 40:
-                return text[:900]
-
-        paragraphs = []
-
-        for p in soup.find_all("p"):
-            text = clean_text(p.get_text(" ", strip=True))
-
-            if len(text) < 60:
-                continue
-
-            lower = text.lower()
-
-            skip_phrases = [
-                "cookies",
-                "far til innihald",
-                "les meira",
-                "les meir",
-                "deil",
-                "facebook",
-                "linkedin",
-                "twitter",
-                "teldupost",
-                "©",
-            ]
-
-            if any(skip in lower for skip in skip_phrases):
-                continue
-
-            paragraphs.append(text)
-
-        if paragraphs:
-            return " ".join(paragraphs[:3])[:900]
-
-    except Exception:
-        return ""
-
-    return ""
+    paragraphs = []
+    for p in soup.find_all("p"):
+        text = clean_text(p.get_text(" ", strip=True))
+        if len(text) < 60:
+            continue
+        lower = text.lower()
+        if any(part in lower for part in ["cookies", "far til innihald", "les meira", "les meir", "deil", "facebook", "linkedin", "twitter", "teldupost", "©"]):
+            continue
+        paragraphs.append(text)
+    return " ".join(paragraphs[:3])[:900] if paragraphs else ""
 
 
 def enrich_items(items):
     enriched = []
-
-    for item in items:
-        item = dict(item)
-
+    for original in items:
+        item = dict(original)
         try:
-            html = fetch_html(item["url"])
-            soup = BeautifulSoup(html, "html.parser")
-            item["title"] = extract_page_title(soup, item["title"])
-        except Exception:
-            pass
+            soup = BeautifulSoup(fetch_html(item["url"]), "html.parser")
+            title = extract_page_title(soup, item.get("title", ""))
+            if title:
+                item["title"] = title
+            summary = extract_description_from_soup(soup)
+            if summary:
+                item["summary"] = summary
+            day = extract_published_at(soup)
+            if day:
+                item["published_at"] = day
+        except Exception as error:
+            log(f"WARNING: Could not enrich {item['url']}: {error}")
 
-        item["source"] = ministry_from_url(
-            item["url"], item.get("source", "Føroya landsstýri")
-        )
-        item["summary"] = extract_description_from_page(item["url"])
-
-        if not item["summary"]:
-            item["summary"] = item["title"]
-
-        item["id"] = item_id(item["url"], item["title"])
-
+        item["source"] = ministry_from_url(item["url"], item.get("source", "Føroya landsstýri"))
+        item["summary"] = item.get("summary") or item.get("title", "")
+        # Keep original ID stable: state.json and local read/unread settings use it.
         enriched.append(item)
-
     return enriched
 
 
@@ -584,10 +613,7 @@ def build_issue_body(items):
 
     lines.append("## Nýtt frá stjórnarráðunum")
     lines.append("")
-    lines.append(
-        "Her er stuttur samandráttur av nýggjum almennum "
-        "dagføringum frá stjórnarráðunum, LUM og Løgtinginum."
-    )
+    lines.append("Her er stuttur samandráttur av nýggjum almennum dagføringum frá stjórnarráðunum, LUM og Løgtinginum.")
     lines.append("")
 
     for i, item in enumerate(items, 1):
@@ -601,19 +627,13 @@ def build_issue_body(items):
         lines.append("")
         lines.append("**Hví hevur hetta týdning?**")
         lines.append("")
-        lines.append(
-            "Hetta er nýggj almenn kunning, sum kann hava týdning "
-            "fyri politikk, umsiting, borgarar, skúlar ella stovnar."
-        )
+        lines.append("Hetta er nýggj almenn kunning, sum kann hava týdning fyri politikk, umsiting, borgarar, skúlar ella stovnar.")
         lines.append("")
         lines.append(f"**Les meira:** {item['url']}")
         lines.append("")
 
     lines.append("---")
-    lines.append(
-        "Automatiskt stovnað: "
-        + datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    )
+    lines.append(f"Automatiskt stovnað: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
 
     return "\n".join(lines)
 
@@ -641,19 +661,16 @@ def create_github_issue(title, body):
         "User-Agent": "fo-ministry-watch/1.0",
     }
 
-    response = requests.post(
-        url, headers=headers, json=payload, timeout=20
-    )
+    response = requests.post(url, headers=headers, json=payload, timeout=20)
     response.raise_for_status()
 
     return response.json().get("html_url")
 
 
 def update_public_feed(items):
-    """Save public articles, deduplicated by URL."""
+    """Save public articles, deduplicated by URL so changed titles do not duplicate."""
     feed_path = os.path.join("docs", "feed.json")
     os.makedirs("docs", exist_ok=True)
-
     try:
         with open(feed_path, "r", encoding="utf-8") as file:
             feed = json.load(file)
@@ -664,38 +681,76 @@ def update_public_feed(items):
 
     existing_urls = {
         normalize_url(article.get("url", ""))
-        for article in feed
-        if isinstance(article, dict)
+        for article in feed if isinstance(article, dict)
     }
-
     found_at = datetime.now(timezone.utc).isoformat()
     added = 0
-
     for item in items:
         url = normalize_url(item["url"])
         if url in existing_urls:
             continue
-
-        feed.insert(0, {
+        if is_placeholder_title(item.get("title", "")):
+            log(f"WARNING: Skipping article without reliable title: {url}")
+            continue
+        entry = {
             "id": item["id"],
             "title": clean_text(item["title"]),
             "source": clean_text(item["source"]),
             "summary": make_summary(item),
             "url": item["url"],
             "found_at": found_at,
-        })
-
+        }
+        if item.get("published_at"):
+            entry["published_at"] = item["published_at"]
+        feed.insert(0, entry)
         existing_urls.add(url)
         added += 1
 
-    # Write atomically to avoid publishing incomplete JSON.
+    # Write atomically to minimize the chance of publishing half-written JSON.
     temporary = feed_path + ".tmp"
-
     with open(temporary, "w", encoding="utf-8") as file:
         json.dump(feed[:500], file, ensure_ascii=False, indent=2)
-
     os.replace(temporary, feed_path)
     return added
+
+
+def repair_public_feed():
+    """Repair saved items in place; preserve ID and original discovery date."""
+    feed_path = os.path.join("docs", "feed.json")
+    if not os.path.isfile(feed_path):
+        return 0
+    with open(feed_path, encoding="utf-8") as file:
+        feed = json.load(file)
+    if not isinstance(feed, list):
+        raise ValueError("docs/feed.json must be an array")
+
+    changed = 0
+    for entry in feed:
+        if not isinstance(entry, dict) or not is_allowed_url(entry.get("url", "")):
+            continue
+        try:
+            soup = BeautifulSoup(fetch_html(entry["url"]), "html.parser")
+            title = extract_page_title(soup, entry.get("title", ""))
+            if title and not is_placeholder_title(title) and title != entry.get("title"):
+                entry["title"] = title
+                changed += 1
+            day = extract_published_at(soup)
+            if day and day != entry.get("published_at"):
+                entry["published_at"] = day
+                changed += 1
+            if not entry.get("summary") or is_placeholder_title(entry.get("summary", "")):
+                summary = extract_description_from_soup(soup)
+                if summary:
+                    entry["summary"] = summary
+                    changed += 1
+        except Exception as error:
+            log(f"WARNING: Could not repair {entry['url']}: {error}")
+
+    temporary = feed_path + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as file:
+        json.dump(feed, file, ensure_ascii=False, indent=2)
+    os.replace(temporary, feed_path)
+    return changed
 
 
 def collect_candidates(sources):
@@ -703,163 +758,97 @@ def collect_candidates(sources):
     candidates = []
     urls = set()
     checked_sources = 0
-
     for source in sources:
-        source_name = source.get(
-            "name", source.get("url", "Ókend kelda")
-        )
-
+        source_name = source.get("name", source.get("url", "Ókend kelda"))
         try:
             items = extract_items(source)
             checked_sources += 1
         except Exception as error:
-            log(
-                f"WARNING: Could not fetch {source_name}: {error}"
-            )
+            log(f"WARNING: Could not fetch {source_name}: {error}")
             continue
-
         for item in items:
             url = normalize_url(item["url"])
             if url not in urls:
                 candidates.append(item)
                 urls.add(url)
-
-        log(
-            f"Checked source: {source_name} | "
-            f"links found: {len(items)}"
-        )
-
+        log(f"Checked source: {source_name} | links found: {len(items)}")
     return candidates, checked_sources
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Ministry news monitor"
-    )
-
+    parser = argparse.ArgumentParser(description="Ministry news monitor")
     mode = parser.add_mutually_exclusive_group()
-
-    mode.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Find potential updates but do not save files or send issues",
-    )
-
-    mode.add_argument(
-        "--backfill-feed",
-        action="store_true",
-        help=(
-            "Populate docs/feed.json from currently visible articles, "
-            "without issues or state changes"
-        ),
-    )
-
+    mode.add_argument("--dry-run", action="store_true",
+                      help="Find potential updates but do not save files or send issues")
+    mode.add_argument("--backfill-feed", action="store_true",
+                      help="Populate docs/feed.json from currently visible articles, without issues or state changes")
     args = parser.parse_args()
 
     state = load_state()
     seen = set(state.get("seen", []))
     sources = load_sources()
-
     log(f"Configured sources: {len(sources)}")
-
     candidates, checked = collect_candidates(sources)
-
     log(f"Checked sources: {checked}")
     log(f"Candidate links: {len(candidates)}")
 
     if args.backfill_feed:
-        # Reconstruct currently visible articles only.
-        selected = [
-            item for item in candidates
-            if is_meaningful(item)
-        ]
+        # This can only reconstruct what the source sites still link to;
+        # the historical state contains hashes, not article metadata.
+        selected = [item for item in candidates if is_meaningful(item)]
         enriched = enrich_items(selected)
         added = update_public_feed(enriched)
-
-        log(
-            f"Backfill complete: {added} articles added "
-            "to docs/feed.json"
-        )
-        log(
-            "No GitHub Issue created; state.json unchanged"
-        )
+        repaired = repair_public_feed()
+        log(f"Existing feed fields repaired: {repaired}")
+        log(f"Backfill complete: {added} articles added to docs/feed.json")
+        log("No GitHub Issue created; state.json unchanged")
         return
 
-    # Never mark unsent meaningful articles as processed.
+    # Keep rejected items in state, but never mark an unsent meaningful article
+    # as processed. Process a maximum of 12 in each notification.
     new_items = []
     rejected_ids = set()
-
     for item in candidates:
         if item["id"] in seen:
             continue
-
         if not is_meaningful(item):
             rejected_ids.add(item["id"])
         else:
             new_items.append(item)
 
     log(f"New meaningful updates: {len(new_items)}")
-
     selected = new_items[:MAX_ITEMS_IN_ISSUE]
-
     if len(new_items) > len(selected):
-        log(
-            "Deferred to future runs: "
-            f"{len(new_items) - len(selected)}"
-        )
+        log(f"Deferred to future runs: {len(new_items) - len(selected)}")
 
     if args.dry_run:
         for item in selected:
-            log(
-                f"PREVIEW: {item['source']} | "
-                f"{item['title']} | {item['url']}"
-            )
-
-        log(
-            "Dry run: state/feed unchanged; no GitHub Issue"
-        )
+            log(f"PREVIEW: {item['source']} | {item['title']} | {item['url']}")
+        log("Dry run: state/feed unchanged; no GitHub Issue")
         return
 
     if not selected:
         if rejected_ids:
             state["seen"] = list(seen | rejected_ids)
             save_state(state)
-
-        log(
-            "No meaningful new updates found; "
-            "no GitHub Issue"
-        )
+        log("No meaningful new updates found; no GitHub Issue")
         return
 
     enriched = enrich_items(selected)
-
-    today = datetime.now(timezone.utc).strftime(
-        "%d.%m.%Y"
-    )
-
-    issue_title = (
-        f"Nýtt frá stjórnarráðunum - {today}"
-    )
+    today = datetime.now(timezone.utc).strftime("%d.%m.%Y")
+    issue_title = f"Nýtt frá stjórnarráðunum - {today}"
     issue_body = build_issue_body(enriched)
 
-    # Do not save state if creating the issue fails.
-    issue_url = create_github_issue(
-        issue_title, issue_body
-    )
-
+    # If issue creation fails, neither state nor public feed is saved.
+    issue_url = create_github_issue(issue_title, issue_body)
     log(f"Created issue: {issue_url}")
 
-    # A feed error leaves state untouched for recovery.
-    # In that rare case, a retry could create another issue.
+    # If publishing the feed fails after issue creation, do not silently lose
+    # items: leave state untouched, so a later retry can recover. Note that
+    # in this rare situation another issue could be generated on retry.
     added = update_public_feed(enriched)
     log(f"Public feed articles added: {added}")
-
-    state["seen"] = list(
-        seen
-        | rejected_ids
-        | {item["id"] for item in selected}
-    )
-
+    state["seen"] = list(seen | rejected_ids | {item["id"] for item in selected})
     save_state(state)
     log("State updated")
 
