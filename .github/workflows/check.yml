@@ -1,84 +1,65 @@
-
 name: Nýtt frá stjórnarráðunum
-
 on:
   push:
-    branches:
-      - main
-
+    branches: [main]
   schedule:
-    # Tríggjar ferðir dagliga, UTC
-    - cron: "30 6 * * *"
-    - cron: "30 10 * * *"
-    - cron: "30 14 * * *"
-
+    - cron: '30 6 * * *'
+    - cron: '30 10 * * *'
+    - cron: '30 14 * * *'
   workflow_dispatch:
-
 permissions:
   contents: write
   issues: write
-
 concurrency:
   group: ministry-check
   cancel-in-progress: false
-
 jobs:
   status:
     name: Commit status
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Check Python syntax
-        run: python -m py_compile monitor.py
-
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python -m py_compile monitor.py push_sender.py
   check:
     name: Daily ministry check
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
       - name: Run monitor
+        run: python monitor.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [ "$GITHUB_REF_NAME" = "ministry-check-pwa" ]; then
-            echo "SAFE TEST: use current state from main"
-            git fetch origin main
-            git show origin/main:state.json > state.json
-            python monitor.py --dry-run
-          else
-            echo "PRODUCTION: normal ministry check"
-            python monitor.py
-          fi
-
-      - name: Commit updated state and feed
-        if: github.ref_name == 'main'
+      - name: Commit state and feed
+        id: commit
         run: |
           git config user.name "ministry-watch-bot"
           git config user.email "actions@github.com"
           git add state.json docs/feed.json
-          git diff --cached --quiet || git commit -m "Update ministry watch state and feed"
-          git push
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "Update ministry watch state and feed"
+            git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Optional push for newly published articles
+        if: steps.commit.outputs.changed == 'true'
+        continue-on-error: true
+        run: |
+          python -m pip install pywebpush
+          python push_sender.py
+        env:
+          PUSH_ENABLED: ${{ secrets.PUSH_ENABLED }}
+          PUSH_VAPID_PRIVATE_KEY: ${{ secrets.PUSH_VAPID_PRIVATE_KEY }}
+          PUSH_SUBSCRIPTIONS_JSON: ${{ secrets.PUSH_SUBSCRIPTIONS_JSON }}
+          PUSH_VAPID_CONTACT: ${{ secrets.PUSH_VAPID_CONTACT }}
