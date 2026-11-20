@@ -7,9 +7,7 @@ on:
       - main
 
   schedule:
-    # Koyrir tríggjar ferðir um dagin.
-    # Tíðirnar eru UTC:
-    # 06:30, 10:30 og 14:30 UTC
+    # Tríggjar ferðir dagliga, UTC
     - cron: "30 6 * * *"
     - cron: "30 10 * * *"
     - cron: "30 14 * * *"
@@ -19,6 +17,10 @@ on:
 permissions:
   contents: write
   issues: write
+
+concurrency:
+  group: ministry-check
+  cancel-in-progress: false
 
 jobs:
   status:
@@ -59,18 +61,21 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run monitor
-        run: |
-          if [ "$GITHUB_REF_NAME" = "ministry-check-pwa" ]; then
-            echo "Running PWA backfill without notifications"
-            python monitor.py --backfill-feed
-          else
-            echo "Running normal ministry check"
-            python monitor.py
-          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "$GITHUB_REF_NAME" = "ministry-check-pwa" ]; then
+            echo "SAFE TEST: use current state from main"
+            git fetch origin main
+            git show origin/main:state.json > state.json
+            python monitor.py --dry-run
+          else
+            echo "PRODUCTION: normal ministry check"
+            python monitor.py
+          fi
 
       - name: Commit updated state and feed
+        if: github.ref_name == 'main'
         run: |
           git config user.name "ministry-watch-bot"
           git config user.email "actions@github.com"
