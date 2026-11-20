@@ -1,18 +1,14 @@
 {
-  "name": "Nýtt frá stjórnarráðunum",
-  "short_name": "Ministry Check",
-  "description": "Nýggj tíðindi frá føroyskum ráðum og almennum stovnum",
+  "name": "Nýtt frá ráðunum",
+  "short_name": "Ráðini",
+  "description": "Tíðindi frá føroyskum stjórnarráðum og almennum stovnum",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#f7f8fb",
-  "theme_color": "#17385b",
+  "background_color": "#f6f8fc",
+  "theme_color": "#073e80",
   "icons": [
-    {
-      "src": "./icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
-    }
+    {"src":"./icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any"},
+    {"src":"./apple-touch-icon.png","sizes":"180x180","type":"image/png","purpose":"any"}
   ]
 }
