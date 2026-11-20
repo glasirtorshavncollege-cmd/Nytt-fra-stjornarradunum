@@ -3,7 +3,7 @@ import hashlib
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import requests
@@ -499,6 +499,43 @@ def parse_publication_date(value):
         return None
 
 
+MONTHS_FO = {
+    "januar": 1, "jan": 1, "februar": 2, "feb": 2, "mars": 3, "mar": 3,
+    "apríl": 4, "april": 4, "apr": 4, "mai": 5, "may": 5,
+    "juni": 6, "jun": 6, "juli": 7, "jul": 7,
+    "august": 8, "aug": 8, "september": 9, "sep": 9,
+    "oktober": 10, "okt": 10, "november": 11, "nov": 11,
+    "desember": 12, "december": 12, "des": 12, "dec": 12,
+    "january": 1, "february": 2, "march": 3, "april": 4,
+    "june": 6, "july": 7, "october": 10, "december": 12,
+}
+
+
+def parse_visible_publication_date(value):
+    """Parse isolated date strings, never arbitrary dates inside article prose."""
+    if not isinstance(value, str):
+        return None
+    text = clean_text(value).lower()
+    if len(text) > 55:
+        return None
+    result = parse_publication_date(text)
+    if result:
+        return result
+    m = re.fullmatch(r"(?:útgivið|dagfest|date|published|tíðindi)?\s*:?\s*(\d{1,2})[./-](\d{1,2})[./-](20\d{2})\.?", text)
+    if m:
+        dd,mm,yy=map(int,m.groups())
+    else:
+        m = re.fullmatch(r"(?:útgivið|dagfest|date|published|tíðindi)?\s*:?\s*(\d{1,2})\.?\s+([a-záðíóúýæø]+)\.?\s+(20\d{2})\.?", text)
+        if not m or m.group(2) not in MONTHS_FO:
+            return None
+        dd,mm,yy=int(m.group(1)),MONTHS_FO[m.group(2)],int(m.group(3))
+    try:
+        parsed=date(yy,mm,dd)
+    except ValueError:
+        return None
+    return parsed.isoformat() if parsed <= datetime.now(timezone.utc).date() else None
+
+
 def extract_published_at(soup):
     """Only explicit machine-readable publication dates, no guessed dates."""
     keys = [
@@ -544,10 +581,26 @@ def extract_published_at(soup):
         if day:
             return day
 
-    for tag in soup.find_all("time", attrs={"datetime": True}, limit=15):
-        day = parse_publication_date(tag.get("datetime"))
+    article = soup.find("article") or soup.find("main") or soup
+    for tag in article.find_all("time", limit=10):
+        day = (parse_publication_date(tag.get("datetime"))
+               or parse_visible_publication_date(tag.get_text(" ", strip=True)))
         if day:
             return day
+
+    # Date labels displayed immediately near the article heading.
+    heading = article.find("h1")
+    if heading:
+        nearby = []
+        for node in [heading.parent, heading.find_previous_sibling(), heading.find_next_sibling()]:
+            if node:
+                nearby.extend(node.find_all(["span", "small", "div", "p"], limit=12))
+        for tag in nearby[:35]:
+            classes = " ".join(tag.get("class", [])).lower()
+            if any(key in classes for key in ("date", "dag", "time", "publish", "created")):
+                day = parse_visible_publication_date(tag.get_text(" ", strip=True))
+                if day:
+                    return day
     return None
 
 
@@ -874,7 +927,7 @@ def main():
     mode.add_argument(
         "--repair-feed-images",
         action="store_true",
-        help="Fetch image metadata for existing feed articles, without issues or state changes",
+        help="Repair image and publication-date metadata in existing feed without issues or state changes",
     )
     mode.add_argument("--backfill-feed", action="store_true",
                       help="Populate docs/feed.json from currently visible articles, without issues or state changes")
