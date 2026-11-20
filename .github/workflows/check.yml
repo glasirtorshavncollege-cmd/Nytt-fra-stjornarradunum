@@ -51,8 +51,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python
-        uses:
-          actions/setup-python@v5
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
@@ -60,14 +59,21 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run monitor
-        run: python monitor.py
+        run: |
+          if [ "$GITHUB_REF_NAME" = "ministry-check-pwa" ]; then
+            echo "Running PWA backfill without notifications"
+            python monitor.py --backfill-feed
+          else
+            echo "Running normal ministry check"
+            python monitor.py
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Commit updated state
+      - name: Commit updated state and feed
         run: |
           git config user.name "ministry-watch-bot"
           git config user.email "actions@github.com"
           git add state.json docs/feed.json
-          git diff --cached --quiet || git commit -m "Update ministry watch state"
+          git diff --cached --quiet || git commit -m "Update ministry watch state and feed"
           git push
