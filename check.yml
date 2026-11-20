@@ -1,3 +1,4 @@
+
 name: Nýtt frá stjórnarráðunum
 
 on:
@@ -6,9 +7,7 @@ on:
       - main
 
   schedule:
-    # Koyrir tríggjar ferðir um dagin.
-    # Tíðirnar eru UTC:
-    # 06:30, 10:30 og 14:30 UTC
+    # Koyrir tríggjar ferðir um dagin (UTC).
     - cron: "30 6 * * *"
     - cron: "30 10 * * *"
     - cron: "30 14 * * *"
@@ -18,6 +17,10 @@ on:
 permissions:
   contents: write
   issues: write
+
+concurrency:
+  group: ministry-check
+  cancel-in-progress: false
 
 jobs:
   status:
@@ -48,6 +51,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -58,14 +63,21 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run monitor
-        run: python monitor.py
+        run: |
+          if [ "$GITHUB_REF_NAME" = "ministry-check-pwa" ]; then
+            echo "PWA test: update feed without notifications"
+            python monitor.py --backfill-feed
+          else
+            echo "Production: normal ministry check"
+            python monitor.py
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Commit updated state
+      - name: Commit updated state and feed
         run: |
           git config user.name "ministry-watch-bot"
           git config user.email "actions@github.com"
-git add state.json docs/feed.json
-git diff --cached --quiet || git commit -m "Update ministry watch state"
+          git add state.json docs/feed.json
+          git diff --cached --quiet || git commit -m "Update ministry watch state and feed"
           git push
