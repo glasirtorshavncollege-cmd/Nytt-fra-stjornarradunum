@@ -1,0 +1,48 @@
+
+name: Verify Ministry Check PWA
+
+on:
+  push:
+    branches:
+      - pwa-push-v2
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify code and push safety
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyyaml
+
+      - name: Check Python syntax
+        run: |
+          python -m py_compile monitor.py
+          python -m py_compile push_sender.py
+          python -m py_compile scripts/generate_vapid.py
+
+      - name: Check workflow YAML
+        run: |
+          python -c "import yaml, glob; [yaml.safe_load(open(f)) for f in glob.glob('.github/workflows/*.yml')]"
+
+      - name: Check push disabled
+        env:
+          PUSH_ENABLED: "false"
+        run: python push_sender.py --test
+
+      - name: Confirm
+        run: echo "Verification completed"

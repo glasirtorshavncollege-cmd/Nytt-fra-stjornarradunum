@@ -1,0 +1,21 @@
+name: Royn push-fráboðan
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pywebpush
+      - name: Send test notification
+        run: python push_sender.py --test
+        env:
+          PUSH_ENABLED: ${{ secrets.PUSH_ENABLED }}
+          PUSH_VAPID_PRIVATE_KEY: ${{ secrets.PUSH_VAPID_PRIVATE_KEY }}
+          PUSH_SUBSCRIPTIONS_JSON: ${{ secrets.PUSH_SUBSCRIPTIONS_JSON }}
+          PUSH_VAPID_CONTACT: ${{ secrets.PUSH_VAPID_CONTACT }}
