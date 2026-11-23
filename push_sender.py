@@ -50,8 +50,10 @@ def send(items):
             webpush(subscription_info=subscription, data=json.dumps(message, ensure_ascii=False),
                     vapid_private_key=private, vapid_claims={"sub": contact}, ttl=3600, timeout=15)
             success += 1
-        except WebPushException as error:
-            print(f"Push delivery failed (HTTP {getattr(error.response,'status_code','?')}); subscription may be expired")
+    except WebPushException as error:
+    status = getattr(error.response, "status_code", "?")
+    print(f"Push delivery failed (HTTP {status})")
+    print(f"Error details: {str(error)[:500]}")    
         except Exception as error:
             print(f"Push delivery failed: {type(error).__name__}")
     print(f"Push sent to {success}/{len(subscriptions)} subscription(s)")
