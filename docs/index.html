@@ -14,7 +14,7 @@
 </head>
 <body>
 <header><div class="head"><button class="iconbtn" id="back" aria-label="Aftur til tíðindi" hidden></button><span class="emblem" id="emblem" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3.5 5v6c0 5.5 3.5 9 8.5 11 5-2 8.5-5.5 8.5-11V5L12 2Z"/><path d="M8 15V9l4 3 4-3v6"/></svg></span><div class="heading">Nýtt frá ráðunum</div><button class="iconbtn" id="rightAction" aria-label="Leita í tíðindum"></button></div><div class="searchrow" id="searchrow" hidden><input id="search" type="search" placeholder="Leita í tíðindum…" aria-label="Leita í tíðindum"></div></header>
-<div class="shell"><main id="listView" class="view body"><nav id="filters" class="filters" aria-label="Vel ráð"></nav><div class="summaryline"><strong id="listTitle">Seinastu tíðindi</strong><span id="count">Lesi tíðindi…</span><button id="refresh" type="button" aria-label="Dagfør tíðindi">↻</button></div><div id="pushpanel" class="pushpanel" hidden><button id="pushEnable" type="button">Fá push-fráboðanir</button><button id="pushCopy" type="button" hidden>Kopiera skráseting</button><span id="pushStatus" role="status"></span></div><section id="cards" class="cards" aria-label="Tíðindayvirlit"></section><p class="footnote">Tíðindi frá almennum keldum. Myndir verða bert vístar, um tær eru við í tíðindadátunum. Nýggj tíðindi verða dagførd í GitHub. Push-boð kunnu tendrast á heimaskíggja-appini, eftir at GitHub-uppsetingin er liðug.</p></main><main id="detailView" class="view detail" hidden></main></div>
+<div class="shell"><main id="listView" class="view body"><nav id="filters" class="filters" aria-label="Vel ráð"></nav><div class="summaryline"><strong id="listTitle">Seinastu tíðindi</strong><span id="count">Lesi tíðindi…</span><button id="refresh" type="button" aria-label="Dagfør tíðindi">↻</button></div><div id="pushpanel" class="pushpanel" hidden><button id="pushEnable" type="button">Fá push-fráboðanir</button><button id="pushCopy" type="button" hidden>Kopiera skráseting</button><button id="badgeClear" type="button" hidden>Strika talmerki</button><span id="pushStatus" role="status"></span></div><section id="cards" class="cards" aria-label="Tíðindayvirlit"></section><p class="footnote">Tíðindi frá almennum keldum. Myndir verða bert vístar, um tær eru við í tíðindadátunum. Nýggj tíðindi verða dagførd í GitHub. Push-boð kunnu tendrast á heimaskíggja-appini, eftir at GitHub-uppsetingin er liðug.</p></main><main id="detailView" class="view detail" hidden></main></div>
 
 
 <script>
@@ -55,7 +55,7 @@ async function preparePush(){
   try{
     const r=await fetch('./push-config.json',{cache:'no-store'});if(!r.ok)return;
     const config=await r.json();if(!config.publicKey)return;
-    pushKey=config.publicKey;pushPanel.hidden=false;
+    pushKey=config.publicKey;pushPanel.hidden=false;$('badgeClear').hidden=false;
     const reg=await navigator.serviceWorker.ready;
     const existing=await reg.pushManager.getSubscription();
     if(existing){$('pushEnable').textContent='Fráboðanir loyvdar';$('pushCopy').hidden=false;pushStatus.textContent='Skrásetingin skal eisini goymast í GitHub Secrets.';}
@@ -79,32 +79,57 @@ $('pushCopy').onclick=async()=>{
   const json=JSON.stringify([sub.toJSON()]);await navigator.clipboard.writeText(json);pushStatus.textContent='Kopierað. Legg upplýsingarnar í GitHub Secret PUSH_SUBSCRIPTIONS_JSON.';
   }catch(error){pushStatus.textContent='Kundi ikki kopiera skrásetingina.'}
 };
-// Clear the home-screen app badge whenever the app is opened or returns to view.
-async function clearHomeScreenBadge(){
-  if(document.visibilityState!=='visible')return;
-  try{
-    if('clearAppBadge' in navigator){
+// Clear the app badge on opening and when returning to the foreground.
+// The manual button is also a diagnostic: it distinguishes a stale app page
+// from an iOS badging failure without changing push subscriptions.
+let badgeClearRunning = false;
+async function clearHomeScreenBadge(showStatus = false) {
+  if (document.visibilityState !== 'visible' || badgeClearRunning) return;
+  badgeClearRunning = true;
+  let cleared = false;
+  let problem = '';
+  try {
+    if (typeof navigator.clearAppBadge === 'function') {
       await navigator.clearAppBadge();
-    }else if('setAppBadge' in navigator){
+      cleared = true;
+    } else if (typeof navigator.setAppBadge === 'function') {
       await navigator.setAppBadge(0);
+      cleared = true;
+    } else {
+      problem = 'Badging API er ikki tøk í hesum vindeyganum.';
     }
-  }catch(error){console.warn('Could not clear app icon badge',error)}
-  if(!('serviceWorker' in navigator))return;
-  try{
-    const reg=await navigator.serviceWorker.ready;
-    const worker=navigator.serviceWorker.controller||reg.active;
-    if(worker)worker.postMessage({type:'CLEAR_BADGE'});
-  }catch(error){console.warn('Could not reset stored badge count',error)}
+  } catch (error) {
+    problem = 'iPhone noktaði striking: ' + (error.name || 'ókendur feilur');
+    console.warn('Could not clear app badge', error);
+  }
+  if ('serviceWorker' in navigator) {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const worker = navigator.serviceWorker.controller || reg.active;
+      if (worker) worker.postMessage({ type: 'CLEAR_BADGE' });
+    } catch (error) {
+      console.warn('Could not clear stored badge count', error);
+    }
+  }
+  badgeClearRunning = false;
+  if (showStatus) {
+    pushStatus.textContent = cleared
+      ? 'Striking er send til iPhone. Kanna nú app-ikonið.'
+      : (problem || 'Kundi ikki strika talmerkið.');
+  }
 }
-if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('./sw.js').then(()=>{
+$('badgeClear').onclick = () => clearHomeScreenBadge(true);
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').then(() => {
     preparePush();
     clearHomeScreenBadge();
-  }).catch(()=>{});
+  }).catch(error => console.warn('Service Worker registration failed', error));
 }
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)clearHomeScreenBadge()});
-window.addEventListener('pageshow',()=>clearHomeScreenBadge());
-window.addEventListener('focus',()=>clearHomeScreenBadge());
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) clearHomeScreenBadge();
+});
+window.addEventListener('pageshow', () => clearHomeScreenBadge());
+window.addEventListener('focus', () => clearHomeScreenBadge());
 draw();
 load();
 </script>
