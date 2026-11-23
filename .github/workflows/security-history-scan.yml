@@ -1,0 +1,126 @@
+
+name: Security history scan
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout complete history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch all branches
+        run: git fetch origin '+refs/heads/*:refs/remotes/origin/*' --force
+
+      - name: Scan Git history
+        env:
+          VAPID_PRIVATE: ${{ secrets.PUSH_VAPID_PRIVATE_KEY }}
+          SUBSCRIPTIONS: ${{ secrets.PUSH_SUBSCRIPTIONS_JSON }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import json
+          import subprocess
+          import sys
+
+          private = os.environ.get("VAPID_PRIVATE", "")
+          subscriptions = os.environ.get("SUBSCRIPTIONS", "")
+
+          needles = []
+          if private:
+              needles.append(("Current VAPID private key", private.encode()))
+              needles.append((
+                  "Escaped VAPID private key",
+                  private.replace("\n", "\\n").encode()
+              ))
+
+          def collect_endpoints(value):
+              if isinstance(value, dict):
+                  for key, item in value.items():
+                      if key == "endpoint" and isinstance(item, str):
+                          if len(item) >= 30:
+                              needles.append(("Push endpoint", item.encode()))
+                      else:
+                          collect_endpoints(item)
+              elif isinstance(value, list):
+                  for item in value:
+                      collect_endpoints(item)
+
+          if subscriptions:
+              try:
+                  collect_endpoints(json.loads(subscriptions))
+              except (ValueError, TypeError):
+                  print("WARNING: Cannot parse subscriptions JSON")
+
+          objects = subprocess.check_output(
+              ["git", "rev-list", "--objects", "--all"],
+              text=True
+          )
+
+          ids = set(line.split()[0] for line in objects.splitlines())
+          checked = 0
+          findings = set()
+
+          patterns = [
+              ("PEM private key", rb"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+              ("Serialized push endpoint",
+               rb'["\']endpoint["\']\s*:\s*["\']https?://'),
+              ("Web push subscription",
+               rb'https://(?:fcm\.googleapis\.com/fcm/send/|'
+               rb'updates\.push\.services\.mozilla\.com/wpush/|'
+               rb'web\.push\.apple\.com/)'),
+          ]
+
+          for oid in ids:
+              kind = subprocess.check_output(
+                  ["git", "cat-file", "-t", oid], text=True
+              ).strip()
+              if kind != "blob":
+                  continue
+
+              size = int(subprocess.check_output(
+                  ["git", "cat-file", "-s", oid], text=True
+              ).strip())
+              if size > 5_000_000:
+                  continue
+
+              data = subprocess.check_output(
+                  ["git", "cat-file", "blob", oid]
+              )
+              checked += 1
+
+              for label, needle in needles:
+                  if needle in data:
+                      findings.add((label, oid))
+
+              for label, pattern in patterns:
+                  if re.search(pattern, data, re.I):
+                      findings.add((label, oid))
+
+          print(f"Git blobs checked: {checked}")
+          print(f"Potential findings: {len(findings)}")
+
+          for label, oid in sorted(findings):
+              print(f"REVIEW: {label} in Git object {oid[:12]}")
+
+          if not private:
+              print("WARNING: Current VAPID secret unavailable")
+          if not subscriptions:
+              print("WARNING: Subscription secret unavailable")
+
+          if findings:
+              print("RESULT: REVIEW REQUIRED")
+              sys.exit(1)
+
+          print("RESULT: NO MATCHES FOUND")
+          PY
