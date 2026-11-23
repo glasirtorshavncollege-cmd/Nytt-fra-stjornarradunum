@@ -1,0 +1,136 @@
+
+name: Kanna push-reglur
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test 48-tima reglu og dupultverju
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test push rules without sending
+        run: |
+          python - <<'PY'
+          import json
+          from datetime import datetime, timedelta, timezone
+          from unittest.mock import patch
+
+          import push_sender
+
+          now = datetime.now(timezone.utc)
+
+          def article(url, published=None, found=None):
+              item = {
+                  "id": url,
+                  "url": url,
+                  "title": "Royndartidindi",
+                  "found_at": (
+                      found or now.isoformat()
+                  ),
+              }
+              if published is not None:
+                  item["published_at"] = published
+              return item
+
+          today = now.date().isoformat()
+          yesterday = (
+              now.date() - timedelta(days=1)
+          ).isoformat()
+          old_day = (
+              now.date() - timedelta(days=5)
+          ).isoformat()
+
+          current = [
+              article(
+                  "https://example.com/new",
+                  published=today,
+              ),
+              article(
+                  "https://example.com/yesterday",
+                  published=yesterday,
+              ),
+              article(
+                  "https://example.com/old",
+                  published=old_day,
+              ),
+              article(
+                  "https://example.com/duplicate",
+                  published=today,
+              ),
+              article(
+                  "https://example.com/unknown-recent",
+                  found=now.isoformat(),
+              ),
+              article(
+                  "https://example.com/unknown-old",
+                  found=(
+                      now - timedelta(days=4)
+                  ).isoformat(),
+              ),
+          ]
+
+          previous = [
+              article(
+                  "https://example.com/duplicate",
+                  published=today,
+              ),
+          ]
+
+          with patch(
+              "push_sender.load_json",
+              return_value=current,
+          ), patch(
+              "push_sender.subprocess.check_output",
+              return_value=json.dumps(previous),
+          ):
+              result = push_sender.newly_published()
+
+          urls = {x["url"] for x in result}
+
+          expected = {
+              "https://example.com/new",
+              "https://example.com/yesterday",
+              "https://example.com/unknown-recent",
+          }
+
+          assert urls == expected, (
+              f"Unexpected push candidates: {urls}"
+          )
+
+          print("OK: New article accepted")
+          print("OK: Yesterday article accepted")
+          print("OK: Old article excluded")
+          print("OK: Duplicate article excluded")
+          print("OK: Recently discovered article accepted")
+          print("OK: Old discovery excluded")
+
+          # Confirm that a missing baseline never sends
+          # a mass backfill.
+          from subprocess import CalledProcessError
+
+          with patch(
+              "push_sender.load_json",
+              return_value=current,
+          ), patch(
+              "push_sender.subprocess.check_output",
+              side_effect=CalledProcessError(1, "git"),
+          ):
+              assert push_sender.newly_published() == []
+
+          print("OK: Missing baseline safely blocked")
+          print("ALL PUSH RULE TESTS PASSED")
+          print("No notification was sent")
+          PY
