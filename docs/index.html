@@ -79,6 +79,33 @@ $('pushCopy').onclick=async()=>{
   const json=JSON.stringify([sub.toJSON()]);await navigator.clipboard.writeText(json);pushStatus.textContent='Kopierað. Legg upplýsingarnar í GitHub Secret PUSH_SUBSCRIPTIONS_JSON.';
   }catch(error){pushStatus.textContent='Kundi ikki kopiera skrásetingina.'}
 };
-if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').then(()=>preparePush()).catch(()=>{});draw();load();
+// Clear the home-screen app badge whenever the app is opened or returns to view.
+async function clearHomeScreenBadge(){
+  if(document.visibilityState!=='visible')return;
+  try{
+    if('clearAppBadge' in navigator){
+      await navigator.clearAppBadge();
+    }else if('setAppBadge' in navigator){
+      await navigator.setAppBadge(0);
+    }
+  }catch(error){console.warn('Could not clear app icon badge',error)}
+  if(!('serviceWorker' in navigator))return;
+  try{
+    const reg=await navigator.serviceWorker.ready;
+    const worker=navigator.serviceWorker.controller||reg.active;
+    if(worker)worker.postMessage({type:'CLEAR_BADGE'});
+  }catch(error){console.warn('Could not reset stored badge count',error)}
+}
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('./sw.js').then(()=>{
+    preparePush();
+    clearHomeScreenBadge();
+  }).catch(()=>{});
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)clearHomeScreenBadge()});
+window.addEventListener('pageshow',()=>clearHomeScreenBadge());
+window.addEventListener('focus',()=>clearHomeScreenBadge());
+draw();
+load();
 </script>
 </body></html>
