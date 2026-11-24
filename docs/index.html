@@ -16,124 +16,318 @@
 <header><div class="head"><button class="iconbtn" id="back" aria-label="Aftur til tíðindi" hidden></button><span class="emblem" id="emblem" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3.5 5v6c0 5.5 3.5 9 8.5 11 5-2 8.5-5.5 8.5-11V5L12 2Z"/><path d="M8 15V9l4 3 4-3v6"/></svg></span><div class="heading">Nýtt frá ráðunum</div><button class="iconbtn" id="rightAction" aria-label="Leita í tíðindum"></button></div><div class="searchrow" id="searchrow" hidden><input id="search" type="search" placeholder="Leita í tíðindum…" aria-label="Leita í tíðindum"></div></header>
 <div class="shell"><main id="listView" class="view body"><nav id="filters" class="filters" aria-label="Vel ráð"></nav><div class="summaryline"><strong id="listTitle">Seinastu tíðindi</strong><span id="count">Lesi tíðindi…</span><button id="refresh" type="button" aria-label="Dagfør tíðindi">↻</button></div><div id="pushpanel" class="pushpanel" hidden><button id="pushEnable" type="button">Fá push-fráboðanir</button><button id="pushCopy" type="button" hidden>Kopiera skráseting</button><span id="pushStatus" role="status"></span></div><section id="cards" class="cards" aria-label="Tíðindayvirlit"></section><p class="footnote">Tíðindi frá almennum keldum. Myndir verða bert vístar, um tær eru við í tíðindadátunum. Nýggj tíðindi verða dagførd í GitHub. Push-boð kunnu tendrast á heimaskíggja-appini, eftir at GitHub-uppsetingin er liðug.</p></main><main id="detailView" class="view detail" hidden></main></div>
 
-
 <script>
 'use strict';
+
 const $=id=>document.getElementById(id);
-const icons={search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',back:'<path d="m15 18-6-6 6-6"/>',bookmark:'<path d="M6 4h12v17l-6-4-6 4z"/>',home:'<path d="m3 11 9-8 9 8v10h-7v-7h-4v7H3z"/>',folder:'<path d="M3 5h7l2 3h9v12H3z"/>',info:'<circle cx="12" cy="12" r="10"/><path d="M12 11v6m0-10h.01"/>',external:'<path d="M14 4h6v6m0-6-9 9"/><path d="M19 14v6H4V5h6"/>',picture:'<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m3 17 6-5 4 3 4-4 4 5"/>'};
+const icons={search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',back:'<path d="m15 18-6-6 6-6"/>',bookmark:'<path d="M6 4h12v17l-6-4-6 4z"/>',home:'<path d="m3 11 9-8 9 8v10h-7v-7h-4v7H3z"/>',folder:'<path d="M3 5h7l2 3h9v12H3z"/>',info:'<circle cx="12" cy="12" r="10"/><path d="M12 11v6m0-10h.01"/>',external:'<path d="M14 4h6v6m0-6-9 9"/><path d="M19 14v6H4V5h6"/>',picture:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m3 17 6-5 4 3 4-5 4 5"/>'};
+
 function svg(name){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+icons[name]+'</svg>'}
+
 const state={items:[],tab:'news',source:'',search:'',selected:null,searchOpen:false};
+
 function readSet(key){try{return new Set(JSON.parse(localStorage.getItem(key)||'[]'))}catch{return new Set()}}
 const readKey='ministry-check-read-v1',savedKey='ministry-check-saved-v1';
+
 function store(key,s){try{localStorage.setItem(key,JSON.stringify([...s].slice(-1000)))}catch{}}
 function toggleSet(key,id){const s=readSet(key);s.has(id)?s.delete(id):s.add(id);store(key,s)}
 function create(tag,cl,txt){const n=document.createElement(tag);if(cl)n.className=cl;if(txt!==undefined)n.textContent=txt;return n}
 function fmtDate(val){if(!val)return '';const d=new Date(val);return isNaN(d.getTime())?'':new Intl.DateTimeFormat('fo-FO',{day:'numeric',month:'short',year:'numeric'}).format(d)}
-// Unknown publication dates stay below dated articles; discovery is not publication.
+
+// Unknown publication dates stay below dated articles.
 function publicationDay(x){const value=x.published_at;if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}/.test(value))return '';const day=value.slice(0,10);const d=new Date(day+'T12:00:00Z');return !isNaN(+d)&&d.toISOString().slice(0,10)===day&&day<=new Date().toISOString().slice(0,10)?day:''}
+
 function dateVal(x){return publicationDay(x)||x.found_at||''}
 function compareNews(a,b){const ad=publicationDay(a),bd=publicationDay(b);if(ad&&bd){const cmp=bd.localeCompare(ad);if(cmp)return cmp}else if(ad||bd){return ad?-1:1}const discovered=(b.found_at||'').localeCompare(a.found_at||'');return discovered||a.title.localeCompare(b.title,'fo')}
 function shownDate(x){return publicationDay(x)?'Útgivið '+fmtDate(publicationDay(x)):'Útgávudagur ókendur'}
 function hue(s){let n=0;for(const c of s)n=(n+c.charCodeAt(0))%5;return String(n)}
 function sourceShort(s){const map={'Løgmansskrivstovan':'LMS','Mentamálaráðið':'MMR','Fíggjarmálaráðið':'FMR','Heilsu- og orkumálaráðið':'HOMR','Almanna- og bústaðamálaráðið':'ABMR','Uttanríkis- og fiskimálaráðið':'UFMR','Vinnumálaráðið':'VMR','Løgtingið':'Løgtingið','Løgtingsins umboðsmaður':'LUM'};return map[s]||s}
+
 function thumbnail(x,hero=false){const d=create('div',hero?'hero':'thumb');const image=x.image||x.image_url;if(typeof image==='string'&&/^https:\/\//.test(image)){const img=create('img');img.src=image;img.alt='';img.loading='lazy';img.referrerPolicy='no-referrer';img.addEventListener('error',()=>{d.replaceChildren();d.innerHTML=svg('picture')});d.append(img)}else{d.innerHTML=svg('picture')}return d}
+
 function drawFilters(){const root=$('filters');root.replaceChildren();const sources=['',...[...new Set(state.items.map(x=>x.source))].sort((a,b)=>a.localeCompare(b,'fo'))];for(const source of sources){const btn=create('button','chip',source?sourceShort(source):'Øll');btn.title=source||'Allar keldur';btn.setAttribute('aria-pressed',String(state.source===source));btn.onclick=()=>{state.source=source;state.tab='news';state.selected=null;draw()};root.append(btn)}}
+
 function visible(){const q=state.search.trim().toLocaleLowerCase();const saved=readSet(savedKey);return state.items.filter(x=>(!state.source||x.source===state.source)&&(state.tab!=='saved'||saved.has(x.id))&&(!q||[x.title,x.summary,x.source].join(' ').toLocaleLowerCase().includes(q)))}
+
 function drawCards(){const root=$('cards');root.replaceChildren();const items=visible();$('count').textContent=items.length+' tíðindi';$('listTitle').textContent=state.tab==='saved'?'Goymd tíðindi':state.source?state.source:'Seinastu tíðindi';if(!items.length){root.append(create('div','empty',state.items.length?'Eingi tíðindi samsvara við valið.':'Enn eru eingi tíðindi í appini.'));return}const read=readSet(readKey);for(const x of items){const card=create('article','card'),btn=create('button','cardbutton');btn.type='button';btn.setAttribute('aria-label','Les '+x.title);btn.append(thumbnail(x));const body=create('div','cardbody');const pill=create('span','sourcepill',x.source);pill.dataset.hue=hue(x.source);body.append(pill);const h=create('h2','',x.title);if(!read.has(x.id))h.append(create('span','unreadDot'));body.append(h);body.append(create('div','when',shownDate(x)));btn.append(body,create('span','arrow','›'));btn.onclick=()=>{state.selected=x.id;const r=readSet(readKey);r.add(x.id);store(readKey,r);draw();window.scrollTo(0,0)};card.append(btn);root.append(card)}}
+
 function drawDetail(x){const root=$('detailView');root.replaceChildren();const pill=create('span','sourcepill',x.source);pill.dataset.hue=hue(x.source);root.append(pill,create('h1','',x.title),create('div','when',shownDate(x)));root.append(thumbnail(x,true));root.append(create('p','',x.summary||'Eingin samandráttur er tøkur.'));const a=create('a','primary');a.href=x.url;a.target='_blank';a.rel='noopener noreferrer';a.innerHTML=svg('external');a.append(document.createTextNode('Les alla greinina á upprunasíðuni'));root.append(a);const s=readSet(savedKey),b=create('button','secondary',s.has(x.id)?'Taka úr goymdum':'Goym greinina');b.onclick=()=>{toggleSet(savedKey,x.id);drawDetail(x)};root.append(b)}
+
 function draw(){const x=state.items.find(i=>i.id===state.selected);const detail=!!x;$('listView').hidden=detail;$('detailView').hidden=!detail;$('back').hidden=!detail;$('emblem').hidden=detail;$('rightAction').innerHTML=svg(detail?'bookmark':'search');$('rightAction').setAttribute('aria-label',detail?'Goym ella tak burtur grein':'Leita í tíðindum');$('searchrow').hidden=detail||!state.searchOpen;if(detail){drawDetail(x)}else{drawFilters();drawCards()}}
-$('back').innerHTML=svg('back');$('back').onclick=()=>{state.selected=null;draw()};$('rightAction').onclick=()=>{if(state.selected){toggleSet(savedKey,state.selected);draw();return}state.searchOpen=!state.searchOpen;$('searchrow').hidden=!state.searchOpen;if(state.searchOpen)$('search').focus()};$('search').oninput=e=>{state.search=e.target.value;drawCards()};$('refresh').onclick=()=>load();window.addEventListener('keydown',e=>{if(e.key==='Escape'){if(state.selected){state.selected=null;draw()}}});
-async function load(){const label=$('count');label.textContent='Dagføri…';try{const res=await fetch('./feed.json?v='+Date.now(),{cache:'no-store'});if(!res.ok)throw new Error('HTTP '+res.status);const data=await res.json();if(!Array.isArray(data))throw new Error('Invalid feed');state.items=data.filter(x=>x&&typeof x.id==='string'&&typeof x.title==='string'&&typeof x.source==='string'&&typeof x.url==='string'&&/^https:\/\//.test(x.url)).sort(compareNews);
-    const wanted=new URLSearchParams(location.search).get('article');
-    if(wanted && state.items.some(x=>x.id===wanted))state.selected=wanted;
-    draw()}catch(e){label.textContent='Kundi ikki lesa tíðindi';if(!state.items.length)$('cards').replaceChildren(create('div','empty','Kundi ikki lesa tíðindi. Kanna internetsambandið og royn aftur.'))}}
-let pushKey = '';
-const pushPanel=$('pushpanel'), pushStatus=$('pushStatus');
-function b64bytes(v){const padded=v.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-v.length%4)%4);const raw=atob(padded);return Uint8Array.from(raw,c=>c.charCodeAt(0))}
-async function preparePush(){
-  if(!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return;
+
+$('back').innerHTML=svg('back');
+$('back').onclick=()=>{state.selected=null;draw()};
+$('rightAction').onclick=()=>{if(state.selected){toggleSet(savedKey,state.selected);draw();return}state.searchOpen=!state.searchOpen;$('searchrow').hidden=!state.searchOpen;if(state.searchOpen)$('search').focus()};
+$('search').oninput=e=>{state.search=e.target.value;drawCards()};
+$('refresh').onclick=()=>load();
+
+window.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){
+    if(state.selected){
+      state.selected=null;
+      draw();
+    }
+  }
+});
+
+// Load and refresh news
+let loading=false;
+let reloadPending=false;
+let initialArticlePending=true;
+
+async function load(){
+  if(loading){
+    reloadPending=true;
+    return;
+  }
+
+  loading=true;
+  const label=$('count');
+  label.textContent='Dagføri…';
+
   try{
-    const r=await fetch('./push-config.json',{cache:'no-store'});if(!r.ok)return;
-    const config=await r.json();if(!config.publicKey)return;
-    pushKey=config.publicKey;pushPanel.hidden=false;
+    const res=await fetch(
+      './feed.json?v='+Date.now(),
+      {cache:'no-store'}
+    );
+
+    if(!res.ok)throw new Error('HTTP '+res.status);
+
+    const data=await res.json();
+    if(!Array.isArray(data))throw new Error('Invalid feed');
+
+    state.items=data.filter(x=>
+      x &&
+      typeof x.id==='string' &&
+      typeof x.title==='string' &&
+      typeof x.source==='string' &&
+      typeof x.url==='string' &&
+      /^https:\/\//.test(x.url)
+    ).sort(compareNews);
+
+    const wanted=new URLSearchParams(location.search).get('article');
+
+    if(initialArticlePending && wanted &&
+       state.items.some(x=>x.id===wanted)){
+      state.selected=wanted;
+      initialArticlePending=false;
+    }
+
+    if(!wanted)initialArticlePending=false;
+
+    draw();
+
+  }catch(e){
+    label.textContent='Kundi ikki lesa tíðindi';
+
+    if(!state.items.length){
+      $('cards').replaceChildren(
+        create('div','empty',
+          'Kundi ikki lesa tíðindi. Kanna internetsambandið og royn aftur.'
+        )
+      );
+    }
+
+  }finally{
+    loading=false;
+
+    if(reloadPending){
+      reloadPending=false;
+      load();
+    }
+  }
+}
+
+// Push setup
+let pushKey='';
+const pushPanel=$('pushpanel'),pushStatus=$('pushStatus');
+
+function b64bytes(v){const padded=v.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-v.length%4)%4);const raw=atob(padded);return Uint8Array.from(raw,c=>c.charCodeAt(0))}
+
+async function preparePush(){
+  if(!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window))return;
+
+  try{
+    const r=await fetch('./push-config.json',{cache:'no-store'});
+    if(!r.ok)return;
+
+    const config=await r.json();
+    if(!config.publicKey)return;
+
+    pushKey=config.publicKey;
+    pushPanel.hidden=false;
+
     const reg=await navigator.serviceWorker.ready;
     const existing=await reg.pushManager.getSubscription();
-    if(existing){$('pushEnable').textContent='Fráboðanir loyvdar';$('pushCopy').hidden=false;pushStatus.textContent='Skrásetingin skal eisini goymast í GitHub Secrets.';}
-  }catch(err){console.warn('Push setup unavailable',err)}
+
+    if(existing){
+      $('pushEnable').textContent='Fráboðanir loyvdar';
+      $('pushCopy').hidden=false;
+      pushStatus.textContent='Skrásetingin skal eisini goymast í GitHub Secrets.';
+    }
+  }catch(err){
+    console.warn('Push setup unavailable',err);
+  }
 }
+
 $('pushEnable').onclick=async()=>{
   if(!pushKey)return;
-  try{
-    if(Notification.permission==='denied'){pushStatus.textContent='Fráboðanir eru noktaðar í stillingunum á telefonini.';return}
-    // Permission request is directly inside the click handler (iOS requirement).
-    const permission=await Notification.requestPermission();
-    if(permission!=='granted'){pushStatus.textContent='Fráboðanir ikki loyvdar.';return}
-    const reg=await navigator.serviceWorker.ready;
-    const subscription=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64bytes(pushKey)});
-    $('pushEnable').textContent='Fráboðanir loyvdar';$('pushCopy').hidden=false;
-    pushStatus.textContent='Trýst á Kopiera skráseting og goym hana sum GitHub Secret.';
-  }catch(error){pushStatus.textContent='Kundi ikki skráseta push. Opna appina frá heimaskíggjanum.'}
-};
-$('pushCopy').onclick=async()=>{
-  try{const reg=await navigator.serviceWorker.ready;const sub=await reg.pushManager.getSubscription();if(!sub){pushStatus.textContent='Eingin skráseting funnin.';return}
-  const json=JSON.stringify([sub.toJSON()]);await navigator.clipboard.writeText(json);pushStatus.textContent='Kopierað. Legg upplýsingarnar í GitHub Secret PUSH_SUBSCRIPTIONS_JSON.';
-  }catch(error){pushStatus.textContent='Kundi ikki kopiera skrásetingina.'}
-};
-// Clear the icon badge after the PWA becomes active.
-// The same direct Badging API call was confirmed to work on the iPhone.
-// Repeating shortly after launch accommodates iOS resuming the installed app.
-let clearSequence = 0;
 
-async function clearHomeScreenBadge() {
-  try {
-    if (typeof navigator.clearAppBadge === 'function') {
+  try{
+    if(Notification.permission==='denied'){
+      pushStatus.textContent='Fráboðanir eru noktaðar í stillingunum á telefonini.';
+      return;
+    }
+
+    const permission=await Notification.requestPermission();
+
+    if(permission!=='granted'){
+      pushStatus.textContent='Fráboðanir ikki loyvdar.';
+      return;
+    }
+
+    const reg=await navigator.serviceWorker.ready;
+
+    const subscription=await reg.pushManager.subscribe({
+      userVisibleOnly:true,
+      applicationServerKey:b64bytes(pushKey)
+    });
+
+    $('pushEnable').textContent='Fráboðanir loyvdar';
+    $('pushCopy').hidden=false;
+    pushStatus.textContent='Trýst á Kopiera skráseting og goym hana sum GitHub Secret.';
+
+  }catch(error){
+    pushStatus.textContent='Kundi ikki skráseta push. Opna appina frá heimaskíggjanum.';
+  }
+};
+
+$('pushCopy').onclick=async()=>{
+  try{
+    const reg=await navigator.serviceWorker.ready;
+    const sub=await reg.pushManager.getSubscription();
+
+    if(!sub){
+      pushStatus.textContent='Eingin skráseting funnin.';
+      return;
+    }
+
+    const json=JSON.stringify([sub.toJSON()]);
+    await navigator.clipboard.writeText(json);
+
+    pushStatus.textContent='Kopierað. Legg upplýsingarnar í GitHub Secret PUSH_SUBSCRIPTIONS_JSON.';
+
+  }catch(error){
+    pushStatus.textContent='Kundi ikki kopiera skrásetingina.';
+  }
+};
+
+// App badge
+let clearSequence=0;
+
+async function clearHomeScreenBadge(){
+  try{
+    if(typeof navigator.clearAppBadge==='function'){
       await navigator.clearAppBadge();
-    } else if (typeof navigator.setAppBadge === 'function') {
+    }else if(typeof navigator.setAppBadge==='function'){
       await navigator.setAppBadge(0);
     }
-  } catch (error) {
-    console.warn('Could not clear app badge', error);
+  }catch(error){
+    console.warn('Could not clear app badge',error);
   }
 
-  if ('serviceWorker' in navigator) {
-    try {
-      const registration = await navigator.serviceWorker.ready;
-      const worker = navigator.serviceWorker.controller || registration.active;
-      if (worker) worker.postMessage({type:'CLEAR_BADGE'});
-    } catch (error) {
-      console.warn('Could not clear stored badge count', error);
+  if('serviceWorker' in navigator){
+    try{
+      const registration=await navigator.serviceWorker.ready;
+      const worker=navigator.serviceWorker.controller || registration.active;
+
+      if(worker)worker.postMessage({type:'CLEAR_BADGE'});
+
+    }catch(error){
+      console.warn('Could not clear stored badge count',error);
     }
   }
 }
 
-function clearBadgeWhenAppOpens() {
-  if (document.hidden) return;
-  const sequence = ++clearSequence;
-  // Run once immediately and again once iOS has fully restored the web app.
-  for (const delay of [0, 800, 2500]) {
-    setTimeout(() => {
-      if (sequence === clearSequence && !document.hidden) {
+function clearBadgeWhenAppOpens(){
+  if(document.hidden)return;
+
+  const sequence=++clearSequence;
+
+  for(const delay of [0,800,2500]){
+    setTimeout(()=>{
+      if(sequence===clearSequence && !document.hidden){
         clearHomeScreenBadge();
       }
-    }, delay);
+    },delay);
   }
 }
 
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').then(() => {
-    preparePush();
-    clearBadgeWhenAppOpens();
-  }).catch(error => console.warn('Service Worker registration failed', error));
-  navigator.serviceWorker.addEventListener('controllerchange', clearBadgeWhenAppOpens);
+// Automatic refresh when the app becomes active
+let refreshTimer;
+
+function refreshWhenActive(){
+  if(document.hidden)return;
+
+  clearBadgeWhenAppOpens();
+  clearTimeout(refreshTimer);
+
+  refreshTimer=setTimeout(()=>{
+    if(!document.hidden)load();
+  },250);
 }
 
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) clearBadgeWhenAppOpens();
-});
-window.addEventListener('pageshow', clearBadgeWhenAppOpens);
-window.addEventListener('focus', clearBadgeWhenAppOpens);
+// Register service worker
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('./sw.js').then(()=>{
+    preparePush();
+    clearBadgeWhenAppOpens();
+  }).catch(error=>{
+    console.warn('Service Worker registration failed',error);
+  });
+
+  navigator.serviceWorker.addEventListener(
+    'controllerchange',
+    refreshWhenActive
+  );
+
+  // Refresh when new push messages arrive.
+  navigator.serviceWorker.addEventListener('message',event=>{
+    if(event.data?.type!=='NEWS_UPDATED')return;
+    if(document.hidden)return;
+
+    refreshWhenActive();
+
+    // Retry in case GitHub Pages is still deploying.
+    for(const delay of [15000,45000,90000]){
+      setTimeout(()=>{
+        if(!document.hidden)load();
+      },delay);
+    }
+  });
+}
+
+// Refresh on resume, focus and page restoration
+document.addEventListener(
+  'visibilitychange',
+  refreshWhenActive
+);
+
+window.addEventListener(
+  'pageshow',
+  refreshWhenActive
+);
+
+window.addEventListener(
+  'focus',
+  refreshWhenActive
+);
+
+// Initial startup
 clearBadgeWhenAppOpens();
 draw();
 load();
+
 </script>
-</body></html>
+</body>
+</html>
