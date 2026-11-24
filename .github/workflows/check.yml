@@ -1,4 +1,6 @@
+
 name: Nýtt frá stjórnarráðunum
+
 on:
   push:
     branches: [main]
@@ -7,53 +9,164 @@ on:
     - cron: '37 10 * * *'
     - cron: '37 14 * * *'
   workflow_dispatch:
+
 permissions:
   contents: write
   issues: write
+  pages: write
+  id-token: write
+
 concurrency:
   group: ministry-check
   cancel-in-progress: false
+
 jobs:
   status:
     name: Commit status
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v7
+
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+
       - run: pip install -r requirements.txt
+
       - run: python -m py_compile monitor.py push_sender.py
+
   check:
     name: Daily ministry check
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - run: pip install -r requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
       - name: Run monitor
         run: python monitor.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Commit state and feed
         id: commit
         run: |
           git config user.name "ministry-watch-bot"
           git config user.email "actions@github.com"
+
           git add state.json docs/feed.json
+
+          if git diff --cached --quiet -- docs/feed.json; then
+            echo "feed_changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "feed_changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
           if git diff --cached --quiet; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No file changes to commit"
           else
             git commit -m "Update ministry watch state and feed"
             git push
-            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
-      - name: Optional push for newly published articles
-        if: steps.commit.outputs.changed == 'true'
+
+      - name: Configure GitHub Pages
+        if: steps.commit.outputs.feed_changed == 'true' || github.event_name == 'workflow_dispatch'
+        uses: actions/configure-pages@v5
+
+      - name: Upload current PWA and feed
+        if: steps.commit.outputs.feed_changed == 'true' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: docs
+
+      - name: Deploy updated feed to GitHub Pages
+        if: steps.commit.outputs.feed_changed == 'true' || github.event_name == 'workflow_dispatch'
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Confirm public feed is updated
+        if: steps.commit.outputs.feed_changed == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          import time
+          import urllib.request
+          from pathlib import Path
+          from urllib.parse import urljoin, urlencode
+
+          expected = json.loads(
+              Path("docs/feed.json").read_text(encoding="utf-8")
+          )
+
+          revision = subprocess.check_output(
+              ["git", "rev-parse", "HEAD"], text=True
+          ).strip()
+
+          url = urljoin(
+              os.environ["PAGE_URL"].rstrip("/") + "/",
+              "feed.json"
+          )
+
+          url += "?" + urlencode({"revision": revision})
+
+          for attempt in range(18):
+              try:
+                  request = urllib.request.Request(
+                      url,
+                      headers={
+                          "Cache-Control": "no-cache",
+                          "User-Agent": "ministry-feed-verifier"
+                      }
+                  )
+
+                  with urllib.request.urlopen(
+                      request, timeout=15
+                  ) as response:
+                      published = json.load(response)
+
+                  if published == expected:
+                      print("OK: Published feed matches current feed")
+                      print("GitHub Pages is ready for push")
+                      break
+
+                  print("Public feed is not updated yet")
+
+              except Exception as error:
+                  print(
+                      "Feed verification retry:",
+                      type(error).__name__
+                  )
+
+              if attempt == 17:
+                  raise SystemExit(
+                      "ERROR: Public feed did not become current. "
+                      "Push notification will not be sent."
+                  )
+
+              time.sleep(10)
+          PY
+
+      - name: Push only after feed is published
+        if: steps.commit.outputs.feed_changed == 'true'
         continue-on-error: true
         run: |
           python -m pip install pywebpush
