@@ -1,5 +1,6 @@
+'use strict';
 
-const CACHE = 'ministry-check-v9';
+const CACHE = 'ministry-check-v10';
 const BADGE_CACHE = 'ministry-check-badge-v1';
 
 const CORE = [
@@ -13,7 +14,11 @@ const CORE = [
 // Install
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE).then(cache => cache.addAll(CORE))
+    caches.open(CACHE).then(cache =>
+      cache.addAll(CORE.map(url =>
+        new Request(url, { cache: 'reload' })
+      ))
+    )
   );
   self.skipWaiting();
 });
@@ -43,6 +48,7 @@ self.addEventListener('fetch', event => {
 
   if (url.origin !== self.location.origin) return;
 
+  // Always fetch fresh news.
   if (url.pathname.endsWith('/feed.json')) {
     event.respondWith(
       fetch(event.request, { cache: 'no-store' })
@@ -50,9 +56,10 @@ self.addEventListener('fetch', event => {
     return;
   }
 
+  // Always try the latest app version.
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request).catch(() =>
+      fetch(event.request, { cache: 'no-store' }).catch(() =>
         caches.match('./index.html')
       )
     );
@@ -126,6 +133,22 @@ async function clearBadge() {
   }
 }
 
+// Tell open app windows to refresh their news.
+async function notifyAppWindows() {
+  const windows = await self.clients.matchAll({
+    type: 'window',
+    includeUncontrolled: true
+  });
+
+  for (const client of windows) {
+    if (client.url.startsWith(self.registration.scope)) {
+      client.postMessage({
+        type: 'NEWS_UPDATED'
+      });
+    }
+  }
+}
+
 // Push notification
 self.addEventListener('push', event => {
   let payload = {
@@ -150,6 +173,7 @@ self.addEventListener('push', event => {
 
   event.waitUntil(
     (async () => {
+
       // Always display the notification.
       const notificationPromise = self.registration.showNotification(
         payload.title,
@@ -173,6 +197,12 @@ self.addEventListener('push', event => {
         notificationPromise,
         badgePromise
       ]);
+
+      // Refresh any open app windows.
+      await notifyAppWindows().catch(error => {
+        console.warn('Could not refresh app windows', error);
+      });
+
     })()
   );
 });
@@ -190,7 +220,7 @@ self.addEventListener('notificationclick', event => {
       try {
         await clearBadge();
       } catch (error) {
-        console.warn('Could not clear app badge', error);
+        console.warn('Could not clear badge', error);
       }
 
       const windows = await clients.matchAll({
@@ -199,7 +229,7 @@ self.addEventListener('notificationclick', event => {
       });
 
       const found = windows.find(client =>
-        new URL(client.url).origin === new URL(target).origin
+        client.url.startsWith(self.registration.scope)
       );
 
       if (found) {
